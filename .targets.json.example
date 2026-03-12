@@ -1,0 +1,20 @@
+{
+  "targets": {
+    "win-vm-1": {
+      "name": "Azure Windows VM",
+      "hostname": "20.64.171.136",
+      "port": 3389,
+      "username": "rdpadmin",
+      "password": "YOUR_PASSWORD_HERE",
+      "domain": ""
+    },
+    "dc-01": {
+      "name": "Domain Controller 01",
+      "hostname": "10.0.1.10",
+      "port": 3389,
+      "username": "Administrator",
+      "password": "YOUR_PASSWORD_HERE",
+      "domain": "CORP"
+    }
+  }
+}

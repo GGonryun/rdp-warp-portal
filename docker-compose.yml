@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  broker:
+    build: .
+    init: true
+    ports:
+      - "${API_PORT:-8080}:8080"
+      - "${PROXY_PORT_START:-33400}-${PROXY_PORT_END:-33410}:${PROXY_PORT_START:-33400}-${PROXY_PORT_END:-33410}"
+    environment:
+      - API_PORT=8080
+      - API_JWT_SECRET=${API_JWT_SECRET:-}
+      - BROKER_HOST=${BROKER_HOST:-localhost}
+      - BROKER_DOMAIN=${BROKER_DOMAIN:-YOURORG}
+      - PROXY_PORT_START=${PROXY_PORT_START:-33400}
+      - PROXY_PORT_END=${PROXY_PORT_END:-33410}
+      - PROXY_INTERNAL_OFFSET=11000
+      - CREDENTIAL_PROVIDER=${CREDENTIAL_PROVIDER:-mock}
+      - CREDENTIAL_PROVIDER_CONFIG=${CREDENTIAL_PROVIDER_CONFIG:-}
+      - ALLOW_MOCK_PROVIDER=${ALLOW_MOCK_PROVIDER:-true}
+      - ALLOW_INSECURE_AUTH=${ALLOW_INSECURE_AUTH:-true}
+      - CERT_DIR=/etc/rdp-broker/certs
+      - SESSION_DIR=/tmp/sessions
+      - FREERDP_PROXY_BIN=freerdp-proxy
+      - MAX_CONCURRENT_SESSIONS=${MAX_CONCURRENT_SESSIONS:-10}
+      - SESSION_MAX_DURATION=${SESSION_MAX_DURATION:-8h}
+      - TOKEN_TTL=${TOKEN_TTL:-5m}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+    volumes:
+      - ./targets.json:/etc/rdp-broker/targets.json:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
