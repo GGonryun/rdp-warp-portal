@@ -297,3 +297,290 @@ func TestSinglePort(t *testing.T) {
 		t.Errorf("expected port 33400, got %d", ext)
 	}
 }
+
+// TestPortPool_LargeOffset tests port pool with large internal offset.
+func TestPortPool_LargeOffset(t *testing.T) {
+	pool := NewPortPool(33400, 33410, 30000) // Large offset
+
+	ext, int_, err := pool.Allocate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ext != 33400 {
+		t.Errorf("expected external port 33400, got %d", ext)
+	}
+
+	if int_ != 63400 {
+		t.Errorf("expected internal port 63400, got %d", int_)
+	}
+}
+
+// TestPortPool_NegativeOffset tests port pool with negative internal offset.
+func TestPortPool_NegativeOffset(t *testing.T) {
+	pool := NewPortPool(33400, 33410, -10000)
+
+	ext, int_, err := pool.Allocate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ext != 33400 {
+		t.Errorf("expected external port 33400, got %d", ext)
+	}
+
+	if int_ != 23400 {
+		t.Errorf("expected internal port 23400, got %d", int_)
+	}
+}
+
+// TestPortPool_ZeroOffset tests port pool with zero offset.
+func TestPortPool_ZeroOffset(t *testing.T) {
+	pool := NewPortPool(33400, 33410, 0)
+
+	ext, int_, err := pool.Allocate()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ext != int_ {
+		t.Errorf("with zero offset, external and internal should be equal: %d != %d", ext, int_)
+	}
+}
+
+// TestPortPool_AllocateAllAndRelease tests allocating all ports then releasing.
+func TestPortPool_AllocateAllAndRelease(t *testing.T) {
+	pool := NewPortPool(33400, 33404, 11000) // 5 ports
+
+	allocated := make([]int, 0, 5)
+
+	// Allocate all ports
+	for i := 0; i < 5; i++ {
+		ext, _, err := pool.Allocate()
+		if err != nil {
+			t.Fatalf("allocation %d failed: %v", i, err)
+		}
+		allocated = append(allocated, ext)
+	}
+
+	if pool.Available() != 0 {
+		t.Errorf("expected 0 available, got %d", pool.Available())
+	}
+
+	// Next allocation should fail
+	_, _, err := pool.Allocate()
+	if !errors.Is(err, ErrNoPortsAvailable) {
+		t.Errorf("expected ErrNoPortsAvailable, got %v", err)
+	}
+
+	// Release all in reverse order
+	for i := len(allocated) - 1; i >= 0; i-- {
+		err := pool.Release(allocated[i])
+		if err != nil {
+			t.Errorf("release failed: %v", err)
+		}
+	}
+
+	if pool.Available() != 5 {
+		t.Errorf("expected 5 available after release, got %d", pool.Available())
+	}
+}
+
+// TestPortPool_DoubleRelease tests that releasing the same port twice returns an error.
+func TestPortPool_DoubleRelease(t *testing.T) {
+	pool := NewPortPool(33400, 33410, 11000)
+
+	ext, _, _ := pool.Allocate()
+
+	// First release should succeed
+	err := pool.Release(ext)
+	if err != nil {
+		t.Fatalf("first release failed: %v", err)
+	}
+
+	// Second release should fail
+	err = pool.Release(ext)
+	if !errors.Is(err, ErrPortNotInUse) {
+		t.Errorf("expected ErrPortNotInUse on double release, got %v", err)
+	}
+}
+
+// TestPortPool_ReleaseMultipleTimes tests releasing multiple ports.
+func TestPortPool_ReleaseMultipleTimes(t *testing.T) {
+	pool := NewPortPool(33400, 33402, 11000) // 3 ports
+
+	// Allocate all
+	p1, _, _ := pool.Allocate()
+	p2, _, _ := pool.Allocate()
+	p3, _, _ := pool.Allocate()
+
+	// Release in different order
+	pool.Release(p2)
+	pool.Release(p1)
+	pool.Release(p3)
+
+	// All should be available
+	if pool.Available() != 3 {
+		t.Errorf("expected 3 available, got %d", pool.Available())
+	}
+}
+
+// TestPortPool_IsInUse_OutOfRange tests IsInUse with out of range ports.
+func TestPortPool_IsInUse_OutOfRange(t *testing.T) {
+	pool := NewPortPool(33400, 33410, 11000)
+
+	// Out of range ports should not be "in use"
+	outOfRangePorts := []int{33399, 33411, 0, -1, 65536}
+
+	for _, port := range outOfRangePorts {
+		if pool.IsInUse(port) {
+			t.Errorf("out of range port %d should not be in use", port)
+		}
+	}
+}
+
+// TestPortPool_ConcurrentAllocateReleaseSamePort tests race conditions.
+func TestPortPool_ConcurrentAllocateReleaseSamePort(t *testing.T) {
+	pool := NewPortPool(33400, 33400, 11000) // Single port
+
+	const iterations = 1000
+	var wg sync.WaitGroup
+
+	for i := 0; i < iterations; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ext, _, err := pool.Allocate()
+			if err == nil {
+				// Small delay to increase chance of race
+				pool.Release(ext)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Should have exactly 1 port available
+	if pool.Available() != 1 {
+		t.Errorf("expected 1 available after concurrent operations, got %d", pool.Available())
+	}
+}
+
+// TestPortPool_InternalPortOutOfRange tests InternalPort calculation for out of range ports.
+func TestPortPool_InternalPortOutOfRange(t *testing.T) {
+	pool := NewPortPool(33400, 33410, 11000)
+
+	// InternalPort doesn't validate range - it just calculates
+	tests := []struct {
+		external int
+		expected int
+	}{
+		{33399, 44399},  // Below range
+		{33411, 44411},  // Above range
+		{0, 11000},      // Zero
+		{-100, 10900},   // Negative
+	}
+
+	for _, tt := range tests {
+		got := pool.InternalPort(tt.external)
+		if got != tt.expected {
+			t.Errorf("InternalPort(%d) = %d, want %d", tt.external, got, tt.expected)
+		}
+	}
+}
+
+// TestPortPool_StressTest runs a stress test with many operations.
+func TestPortPool_StressTest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping stress test in short mode")
+	}
+
+	pool := NewPortPool(33400, 33499, 11000) // 100 ports
+
+	const numGoroutines = 100
+	const operationsPerGoroutine = 1000
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < operationsPerGoroutine; j++ {
+				ext, _, err := pool.Allocate()
+				if err == nil {
+					// Do some operations while holding the port
+					pool.IsInUse(ext)
+					pool.InternalPort(ext)
+					pool.Available()
+					pool.InUse()
+					pool.Release(ext)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// All ports should be available
+	if pool.InUse() != 0 {
+		t.Errorf("expected 0 in use after stress test, got %d", pool.InUse())
+	}
+
+	if pool.Available() != 100 {
+		t.Errorf("expected 100 available after stress test, got %d", pool.Available())
+	}
+}
+
+// TestPortPool_AllocateBoundaryPorts tests allocation at pool boundaries.
+func TestPortPool_AllocateBoundaryPorts(t *testing.T) {
+	pool := NewPortPool(33400, 33402, 11000) // 3 ports
+
+	// Allocate first port
+	p1, _, _ := pool.Allocate()
+	if p1 != 33400 {
+		t.Errorf("first port should be 33400, got %d", p1)
+	}
+
+	// Allocate middle port
+	p2, _, _ := pool.Allocate()
+	if p2 != 33401 {
+		t.Errorf("second port should be 33401, got %d", p2)
+	}
+
+	// Allocate last port
+	p3, _, _ := pool.Allocate()
+	if p3 != 33402 {
+		t.Errorf("third port should be 33402, got %d", p3)
+	}
+
+	// Release middle port
+	pool.Release(33401)
+
+	// Next allocation should get the middle port
+	p4, _, _ := pool.Allocate()
+	if p4 != 33401 {
+		t.Errorf("fourth port should be 33401 (reused), got %d", p4)
+	}
+}
+
+// TestPortPool_Total_Consistency tests Total() consistency.
+func TestPortPool_Total_Consistency(t *testing.T) {
+	tests := []struct {
+		start    int
+		end      int
+		expected int
+	}{
+		{33400, 33400, 1},
+		{33400, 33401, 2},
+		{33400, 33499, 100},
+		{1, 65535, 65535},
+	}
+
+	for _, tt := range tests {
+		pool := NewPortPool(tt.start, tt.end, 11000)
+		if pool.Total() != tt.expected {
+			t.Errorf("Total() for range %d-%d: got %d, want %d", tt.start, tt.end, pool.Total(), tt.expected)
+		}
+	}
+}

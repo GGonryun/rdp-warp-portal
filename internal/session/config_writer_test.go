@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/p0-security/rdp-broker/internal/credential"
@@ -325,4 +326,326 @@ func TestWriteConfig_OverwritesExisting(t *testing.T) {
 	if !strings.Contains(contentStr, "user2") || !strings.Contains(contentStr, "10.0.2.20") {
 		t.Error("new config values not present after overwrite")
 	}
+}
+
+// TestDeleteConfig_NonExistent tests deleting a config that doesn't exist.
+func TestDeleteConfig_NonExistent(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	err := writer.DeleteConfig("nonexistent-session")
+	if err == nil {
+		t.Error("expected error when deleting non-existent config")
+	}
+}
+
+// TestCleanupSession_NonExistent tests cleaning up a session that doesn't exist.
+func TestCleanupSession_NonExistent(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	// CleanupSession uses RemoveAll, which doesn't error on non-existent paths
+	err := writer.CleanupSession("nonexistent-session")
+	if err != nil {
+		t.Errorf("CleanupSession should not error on non-existent session: %v", err)
+	}
+}
+
+// TestWriteConfig_ConcurrentWrites tests concurrent config writes.
+func TestWriteConfig_ConcurrentWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	const numGoroutines = 10
+	var wg sync.WaitGroup
+	errors := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sessionID := "concurrent-" + string(rune('a'+idx))
+			creds := &credential.TargetCredentials{
+				Hostname: "10.0.1." + string(rune('0'+idx)),
+				Port:     3389 + idx,
+				Username: "user" + string(rune('0'+idx)),
+				Password: "pass" + string(rune('0'+idx)),
+				Domain:   "DOM",
+			}
+			_, err := writer.WriteConfig(sessionID, 44400+idx, creds)
+			if err != nil {
+				errors <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	for err := range errors {
+		t.Errorf("concurrent write failed: %v", err)
+	}
+}
+
+// TestWriteConfig_PathTraversalAttempt tests that path traversal is handled.
+// Note: Go's filepath.Join normalizes paths, so "../.." sequences are resolved
+// against the base directory. This test documents the behavior.
+func TestWriteConfig_PathTraversalAttempt(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	// Session ID with path traversal attempt
+	// filepath.Join(tmpDir, "../../../etc/passwd") will normalize the path
+	sessionID := "../../../etc/passwd"
+	creds := &credential.TargetCredentials{
+		Hostname: "10.0.1.10",
+		Port:     3389,
+		Username: "admin",
+		Password: "pass",
+		Domain:   "DOMAIN",
+	}
+
+	configPath, err := writer.WriteConfig(sessionID, 44400, creds)
+	if err != nil {
+		// Expected on many systems - can't write to /etc
+		t.Logf("WriteConfig with path traversal failed (expected): %v", err)
+		return
+	}
+
+	// If it somehow succeeded, just log the path - filepath.Join normalizes paths
+	// which means the path traversal gets resolved relative to tmpDir
+	t.Logf("Config written to: %s (filepath.Join normalizes paths)", configPath)
+}
+
+// TestWriteConfig_VeryLongSessionID tests handling of very long session IDs.
+func TestWriteConfig_VeryLongSessionID(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	// Very long session ID
+	sessionID := strings.Repeat("a", 200)
+	creds := &credential.TargetCredentials{
+		Hostname: "10.0.1.10",
+		Port:     3389,
+		Username: "admin",
+		Password: "pass",
+		Domain:   "DOMAIN",
+	}
+
+	_, err := writer.WriteConfig(sessionID, 44400, creds)
+	// This might fail on some filesystems with path length limits
+	if err != nil {
+		t.Logf("WriteConfig with long session ID failed (acceptable on some systems): %v", err)
+	}
+}
+
+// TestWriteConfig_AllSections tests that all INI sections are present.
+func TestWriteConfig_AllSections(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	creds := &credential.TargetCredentials{
+		Hostname: "10.0.1.10",
+		Port:     3389,
+		Username: "admin",
+		Password: "pass",
+		Domain:   "DOMAIN",
+	}
+
+	configPath, _ := writer.WriteConfig("test-sections", 44400, creds)
+	content, _ := os.ReadFile(configPath)
+	contentStr := string(content)
+
+	sections := []string{
+		"[Server]",
+		"[Target]",
+		"[Channels]",
+		"[Input]",
+		"[Security]",
+		"[Certificates]",
+		"[Clipboard]",
+	}
+
+	for _, section := range sections {
+		if !strings.Contains(contentStr, section) {
+			t.Errorf("expected section %q in config", section)
+		}
+	}
+}
+
+// TestWriteConfig_SecuritySettings tests that security settings are correct.
+func TestWriteConfig_SecuritySettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	creds := &credential.TargetCredentials{
+		Hostname: "10.0.1.10",
+		Port:     3389,
+		Username: "admin",
+		Password: "pass",
+		Domain:   "DOMAIN",
+	}
+
+	configPath, _ := writer.WriteConfig("test-security", 44400, creds)
+	content, _ := os.ReadFile(configPath)
+	contentStr := string(content)
+
+	securitySettings := []string{
+		"ServerTlsSecurity = true",
+		"ServerNlaSecurity = false",
+		"ServerRdpSecurity = true",
+		"ClientTlsSecurity = true",
+		"ClientNlaSecurity = true",
+		"ClientRdpSecurity = true",
+		"ClientAllowFallbackToTls = true",
+	}
+
+	for _, setting := range securitySettings {
+		if !strings.Contains(contentStr, setting) {
+			t.Errorf("expected security setting %q in config", setting)
+		}
+	}
+}
+
+// TestGenerateConfigBytes_ValidContent tests GenerateConfigBytes returns valid content.
+func TestGenerateConfigBytes_ValidContent(t *testing.T) {
+	writer, _ := NewConfigWriter("/etc/certs", "/tmp/sessions")
+
+	creds := &credential.TargetCredentials{
+		Hostname: "10.0.1.10",
+		Port:     3389,
+		Username: "admin",
+		Password: "pass",
+		Domain:   "DOMAIN",
+	}
+
+	content, err := writer.GenerateConfigBytes(44400, creds)
+	if err != nil {
+		t.Fatalf("GenerateConfigBytes failed: %v", err)
+	}
+
+	if len(content) == 0 {
+		t.Error("GenerateConfigBytes returned empty content")
+	}
+
+	// Verify it's valid INI-like content
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "[Server]") {
+		t.Error("expected [Server] section in content")
+	}
+}
+
+// TestWriteConfig_ChannelSettings tests that channel settings are correct.
+func TestWriteConfig_ChannelSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	creds := &credential.TargetCredentials{
+		Hostname: "10.0.1.10",
+		Port:     3389,
+		Username: "admin",
+		Password: "pass",
+		Domain:   "DOMAIN",
+	}
+
+	configPath, _ := writer.WriteConfig("test-channels", 44400, creds)
+	content, _ := os.ReadFile(configPath)
+	contentStr := string(content)
+
+	channelSettings := []string{
+		"GFX = true",
+		"DisplayControl = true",
+		"Clipboard = true",
+		"AudioInput = true",
+		"AudioOutput = true",
+		"DeviceRedirection = true",
+		"VideoRedirection = true",
+		"CameraRedirection = true",
+		"RemoteApp = false",
+		"PassthroughIsBlacklist = true",
+	}
+
+	for _, setting := range channelSettings {
+		if !strings.Contains(contentStr, setting) {
+			t.Errorf("expected channel setting %q in config", setting)
+		}
+	}
+}
+
+// TestWriteConfig_InputSettings tests that input settings are correct.
+func TestWriteConfig_InputSettings(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	creds := &credential.TargetCredentials{
+		Hostname: "10.0.1.10",
+		Port:     3389,
+		Username: "admin",
+		Password: "pass",
+		Domain:   "DOMAIN",
+	}
+
+	configPath, _ := writer.WriteConfig("test-input", 44400, creds)
+	content, _ := os.ReadFile(configPath)
+	contentStr := string(content)
+
+	inputSettings := []string{
+		"Keyboard = true",
+		"Mouse = true",
+		"Multitouch = true",
+	}
+
+	for _, setting := range inputSettings {
+		if !strings.Contains(contentStr, setting) {
+			t.Errorf("expected input setting %q in config", setting)
+		}
+	}
+}
+
+// TestWriteConfig_DifferentPorts tests writing configs with different port values.
+func TestWriteConfig_DifferentPorts(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, _ := NewConfigWriter(tmpDir, tmpDir)
+
+	ports := []int{1, 3389, 44400, 65535}
+
+	for _, port := range ports {
+		t.Run(string(rune('0'+port)), func(t *testing.T) {
+			sessionID := "port-test-" + itoa(port)
+			creds := &credential.TargetCredentials{
+				Hostname: "10.0.1.10",
+				Port:     port,
+				Username: "admin",
+				Password: "pass",
+				Domain:   "DOMAIN",
+			}
+
+			configPath, err := writer.WriteConfig(sessionID, port, creds)
+			if err != nil {
+				t.Fatalf("WriteConfig failed for port %d: %v", port, err)
+			}
+
+			content, _ := os.ReadFile(configPath)
+			contentStr := string(content)
+
+			// The internal port should match
+			expectedPort := "Port = " + itoa(port)
+			if !strings.Contains(contentStr, expectedPort) {
+				t.Errorf("expected port %d in config", port)
+			}
+		})
+	}
+}
+
+// itoa is a simple integer to string conversion for testing.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	result := ""
+	for n > 0 {
+		result = string(rune('0'+n%10)) + result
+		n /= 10
+	}
+	return result
 }

@@ -1,24 +1,38 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/p0-security/rdp-broker/internal/credential"
 	"github.com/p0-security/rdp-broker/internal/session"
 )
 
+// SessionManager defines the interface for session management operations.
+type SessionManager interface {
+	CreateSession(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error)
+	GetSession(sessionID string) (*session.Session, error)
+	ListSessions(userID string) []*session.Session
+	TerminateSession(ctx context.Context, sessionID string) error
+	GenerateRDPFile(sessionID string) ([]byte, error)
+	TokenExpiry(sessionID string) (time.Time, error)
+	ActiveSessionCount() int
+	AvailablePorts() int
+}
+
 // SessionsHandler handles session-related API endpoints.
 type SessionsHandler struct {
-	manager    *session.Manager
+	manager    SessionManager
 	brokerHost string
 }
 
 // NewSessionsHandler creates a new sessions handler.
-func NewSessionsHandler(manager *session.Manager, brokerHost string) *SessionsHandler {
+func NewSessionsHandler(manager SessionManager, brokerHost string) *SessionsHandler {
 	return &SessionsHandler{
 		manager:    manager,
 		brokerHost: brokerHost,

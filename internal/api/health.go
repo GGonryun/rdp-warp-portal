@@ -2,17 +2,21 @@ package api
 
 import (
 	"net/http"
-
-	"github.com/p0-security/rdp-broker/internal/session"
 )
+
+// HealthManager defines the interface for health check operations.
+type HealthManager interface {
+	ActiveSessionCount() int
+	AvailablePorts() int
+}
 
 // HealthHandler handles health check endpoints.
 type HealthHandler struct {
-	manager *session.Manager
+	manager HealthManager
 }
 
 // NewHealthHandler creates a new health handler.
-func NewHealthHandler(manager *session.Manager) *HealthHandler {
+func NewHealthHandler(manager HealthManager) *HealthHandler {
 	return &HealthHandler{
 		manager: manager,
 	}

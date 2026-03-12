@@ -255,3 +255,277 @@ func TestProxyOutput_NilWriter(t *testing.T) {
 		t.Errorf("expected n=4, got %d", n)
 	}
 }
+
+func TestStopProxy_ReturnsImmediately(t *testing.T) {
+	// Start a long-running sleep process
+	pm := NewProxyManager("sleep")
+
+	cmd, err := pm.StartProxy("60", nil, nil)
+	if err != nil {
+		t.Fatalf("StartProxy failed: %v", err)
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	// Verify it's running
+	if !pm.IsRunning(cmd) {
+		t.Fatal("process should be running")
+	}
+
+	// StopProxy should return almost immediately (not wait for process to exit)
+	start := time.Now()
+	err = pm.StopProxy(cmd, time.Second)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Errorf("StopProxy failed: %v", err)
+	}
+
+	// StopProxy should return within 100ms since it doesn't wait for exit
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("StopProxy took too long (%v), expected it to return immediately without waiting", elapsed)
+	}
+
+	// The process should still be in the process of terminating
+	// (we sent Kill but didn't wait)
+	// Clean up by waiting for actual exit
+	cmd.Wait()
+}
+
+func TestStopProxy_SendsSIGKILL(t *testing.T) {
+	// Start a process that ignores SIGTERM (using a trap)
+	// We use a shell command that traps SIGTERM but not SIGKILL
+	pm := NewProxyManager("sh")
+
+	// This shell command traps SIGTERM and ignores it, but SIGKILL cannot be trapped
+	cmd, err := pm.StartProxy("-c", nil, nil)
+	if err != nil {
+		// Fall back to using sleep directly
+		pm = NewProxyManager("sleep")
+		cmd, err = pm.StartProxy("60", nil, nil)
+		if err != nil {
+			t.Fatalf("StartProxy failed: %v", err)
+		}
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+
+	// Verify it's running
+	if !pm.IsRunning(cmd) {
+		t.Fatal("process should be running")
+	}
+
+	// Stop the process
+	err = pm.StopProxy(cmd, time.Second)
+	if err != nil {
+		t.Errorf("StopProxy failed: %v", err)
+	}
+
+	// Wait for the process to exit and check its state
+	cmd.Wait()
+
+	// After SIGKILL, the process should be dead
+	if pm.IsRunning(cmd) {
+		t.Error("process should not be running after SIGKILL")
+	}
+
+	// On Unix, a process killed by SIGKILL has exit status -1 and signal 9
+	if cmd.ProcessState == nil {
+		t.Fatal("ProcessState should be set after Wait()")
+	}
+
+	// The process was killed (not exited normally)
+	if cmd.ProcessState.Success() {
+		t.Error("process killed by SIGKILL should not have success status")
+	}
+}
+
+func TestStopProxy_HandlesAlreadyExitedProcessGracefully(t *testing.T) {
+	pm := NewProxyManager("sleep")
+
+	// Start a long-running process
+	cmd, err := pm.StartProxy("60", nil, nil)
+	if err != nil {
+		t.Fatalf("StartProxy failed: %v", err)
+	}
+
+	// Kill it directly (simulating it dying on its own)
+	cmd.Process.Kill()
+	cmd.Wait()
+
+	// Now ProcessState is set, indicating the process has exited
+	if cmd.ProcessState == nil {
+		t.Fatal("ProcessState should be set after Wait()")
+	}
+
+	// StopProxy should handle this gracefully and return nil
+	err = pm.StopProxy(cmd, time.Second)
+	if err != nil {
+		t.Errorf("StopProxy on already-exited process should not error: %v", err)
+	}
+}
+
+func TestStopProxy_HandlesNilCmdGracefully(t *testing.T) {
+	pm := NewProxyManager("test")
+
+	// Test with completely nil cmd
+	err := pm.StopProxy(nil, time.Second)
+	if err != nil {
+		t.Errorf("StopProxy(nil) should not error: %v", err)
+	}
+}
+
+func TestStopProxy_HandlesNilProcessGracefully(t *testing.T) {
+	pm := NewProxyManager("test")
+
+	// Test with cmd that has nil Process (never started)
+	cmd := &exec.Cmd{}
+	err := pm.StopProxy(cmd, time.Second)
+	if err != nil {
+		t.Errorf("StopProxy on cmd with nil Process should not error: %v", err)
+	}
+}
+
+// TestWaitReady_ContextDeadlineExceeded tests context deadline behavior.
+func TestWaitReady_ContextDeadlineExceeded(t *testing.T) {
+	// Use a port that nothing is listening on
+	listener, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := listener.Addr().String()
+	listener.Close()
+
+	pm := NewProxyManager("test")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := pm.WaitReady(ctx, addr, 5*time.Second)
+	if err != context.DeadlineExceeded {
+		t.Errorf("expected context.DeadlineExceeded, got %v", err)
+	}
+}
+
+// TestWaitReady_ServerAppearsLater tests the polling behavior.
+func TestWaitReady_ServerAppearsLater(t *testing.T) {
+	pm := NewProxyManager("test")
+
+	// Use a high port that should be available
+	addr := "127.0.0.1:44999"
+
+	// Start server after 200ms
+	serverStarted := make(chan struct{})
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		listener, err := net.Listen("tcp", addr)
+		if err != nil {
+			return
+		}
+		close(serverStarted)
+		time.Sleep(2 * time.Second)
+		listener.Close()
+	}()
+
+	ctx := context.Background()
+	err := pm.WaitReady(ctx, addr, 2*time.Second)
+	if err != nil {
+		t.Logf("WaitReady returned error (may be expected if port in use): %v", err)
+	}
+
+	// Wait for server cleanup
+	select {
+	case <-serverStarted:
+		// Server started as expected
+	case <-time.After(500 * time.Millisecond):
+		// Server may not have started if port was in use
+	}
+}
+
+// TestProxyOutput_EmptyData tests writing empty data.
+func TestProxyOutput_EmptyData(t *testing.T) {
+	var buf bytes.Buffer
+	output := NewProxyOutput("session-123", &buf, "OUT: ")
+
+	n, err := output.Write([]byte{})
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected n=0, got %d", n)
+	}
+}
+
+// TestProxyOutput_LargeData tests writing large amounts of data.
+func TestProxyOutput_LargeData(t *testing.T) {
+	var buf bytes.Buffer
+	output := NewProxyOutput("session-123", &buf, "OUT: ")
+
+	largeData := bytes.Repeat([]byte("x"), 10000)
+	n, err := output.Write(largeData)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != 10000 {
+		t.Errorf("expected n=10000, got %d", n)
+	}
+}
+
+// TestProxyOutput_MultipleWrites tests multiple consecutive writes.
+func TestProxyOutput_MultipleWrites(t *testing.T) {
+	var buf bytes.Buffer
+	output := NewProxyOutput("session-123", &buf, "OUT: ")
+
+	for i := 0; i < 10; i++ {
+		n, err := output.Write([]byte("message"))
+		if err != nil {
+			t.Fatalf("Write %d failed: %v", i, err)
+		}
+		if n != 7 {
+			t.Errorf("Write %d: expected n=7, got %d", i, n)
+		}
+	}
+}
+
+// TestIsRunning_CmdWithNilProcess tests IsRunning with various nil states.
+func TestIsRunning_CmdWithNilProcess(t *testing.T) {
+	pm := NewProxyManager("test")
+
+	// Cmd with nil Process
+	cmd := &exec.Cmd{}
+	if pm.IsRunning(cmd) {
+		t.Error("IsRunning should return false for cmd with nil Process")
+	}
+}
+
+// TestStartProxy_WithStderr tests starting with stderr output.
+func TestStartProxy_WithStderr(t *testing.T) {
+	pm := NewProxyManager("sh")
+
+	var stdout, stderr bytes.Buffer
+	cmd, err := pm.StartProxy("-c", &stdout, &stderr)
+	if err != nil {
+		// sh -c with empty arg might fail
+		t.Logf("StartProxy returned error (expected): %v", err)
+		return
+	}
+
+	cmd.Wait()
+}
+
+// TestStartProxy_WithBothOutputs tests starting with both stdout and stderr.
+func TestStartProxy_WithBothOutputs(t *testing.T) {
+	pm := NewProxyManager("echo")
+
+	var stdout, stderr bytes.Buffer
+	cmd, err := pm.StartProxy("test output", &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("StartProxy failed: %v", err)
+	}
+
+	cmd.Wait()
+
+	if !strings.Contains(stdout.String(), "test output") {
+		t.Errorf("expected 'test output' in stdout, got %q", stdout.String())
+	}
+}

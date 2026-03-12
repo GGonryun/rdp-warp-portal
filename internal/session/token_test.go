@@ -284,3 +284,194 @@ func TestGenerateToken_Uniqueness(t *testing.T) {
 		tokens[token] = true
 	}
 }
+
+// TestToken_ZeroTTL tests token behavior with zero TTL (immediate expiration).
+func TestToken_ZeroTTL(t *testing.T) {
+	token, err := NewToken(0)
+	if err != nil {
+		t.Fatalf("NewToken with zero TTL failed: %v", err)
+	}
+
+	// Token should be immediately expired or very close to it
+	// Allow a small buffer for execution time
+	time.Sleep(time.Millisecond)
+	if !token.IsExpired() {
+		t.Error("token with zero TTL should be expired")
+	}
+
+	err = token.Validate(token.Value())
+	if !errors.Is(err, ErrTokenExpired) {
+		t.Errorf("expected ErrTokenExpired for zero TTL token, got %v", err)
+	}
+}
+
+// TestToken_NegativeTTL tests token behavior with negative TTL.
+func TestToken_NegativeTTL(t *testing.T) {
+	token, err := NewToken(-time.Hour)
+	if err != nil {
+		t.Fatalf("NewToken with negative TTL failed: %v", err)
+	}
+
+	// Token should be expired
+	if !token.IsExpired() {
+		t.Error("token with negative TTL should be expired")
+	}
+
+	if token.TTLRemaining() >= 0 {
+		t.Error("TTL remaining should be negative for expired token")
+	}
+}
+
+// TestToken_LargeTTL tests token behavior with very large TTL.
+func TestToken_LargeTTL(t *testing.T) {
+	ttl := 365 * 24 * time.Hour // 1 year
+	token, err := NewToken(ttl)
+	if err != nil {
+		t.Fatalf("NewToken with large TTL failed: %v", err)
+	}
+
+	if token.IsExpired() {
+		t.Error("token with large TTL should not be expired")
+	}
+
+	remaining := token.TTLRemaining()
+	// Should be close to 1 year (allow 1 second tolerance)
+	if remaining < ttl-time.Second || remaining > ttl {
+		t.Errorf("unexpected TTL remaining: %v", remaining)
+	}
+}
+
+// TestToken_EmptyValue tests validation against empty string.
+func TestToken_EmptyValue(t *testing.T) {
+	token, _ := NewToken(60 * time.Second)
+
+	err := token.Validate("")
+	if !errors.Is(err, ErrTokenMismatch) {
+		t.Errorf("expected ErrTokenMismatch for empty value, got %v", err)
+	}
+
+	err = token.ValidateWithoutConsume("")
+	if !errors.Is(err, ErrTokenMismatch) {
+		t.Errorf("expected ErrTokenMismatch for empty value in ValidateWithoutConsume, got %v", err)
+	}
+}
+
+// TestToken_ExpireDuringValidation tests race between expiration and validation.
+func TestToken_ExpireDuringValidation(t *testing.T) {
+	// Create token that expires very soon
+	token, _ := NewToken(5 * time.Millisecond)
+	value := token.Value()
+
+	// Wait until token might be expired
+	time.Sleep(3 * time.Millisecond)
+
+	// Try many validations - some should fail with expired, none should panic
+	for i := 0; i < 100; i++ {
+		err := token.Validate(value)
+		if err == nil || errors.Is(err, ErrTokenExpired) || errors.Is(err, ErrTokenAlreadyUsed) {
+			// These are all acceptable outcomes
+			continue
+		}
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestToken_ConcurrentReads tests that Value() and Expiry() are safe for concurrent access.
+func TestToken_ConcurrentReads(t *testing.T) {
+	token, _ := NewToken(60 * time.Second)
+
+	var wg sync.WaitGroup
+	const numGoroutines = 100
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = token.Value()
+			_ = token.Expiry()
+			_ = token.IsExpired()
+			_ = token.IsConsumed()
+			_ = token.TTLRemaining()
+		}()
+	}
+
+	wg.Wait()
+}
+
+// TestToken_ValidateOrderMatters tests that validation checks happen in correct order.
+func TestToken_ValidateOrderMatters(t *testing.T) {
+	// Test 1: Wrong value should be rejected even if token is consumed
+	token1, _ := NewToken(60 * time.Second)
+	token1.Validate(token1.Value()) // Consume it
+
+	err := token1.Validate("wrong-value")
+	// Should be ErrTokenMismatch, not ErrTokenAlreadyUsed
+	if !errors.Is(err, ErrTokenMismatch) {
+		t.Errorf("expected ErrTokenMismatch for wrong value on consumed token, got %v", err)
+	}
+
+	// Test 2: Correct value on consumed token should be ErrTokenAlreadyUsed
+	token2, _ := NewToken(60 * time.Second)
+	value := token2.Value()
+	token2.Validate(value) // Consume it
+
+	err = token2.Validate(value)
+	if !errors.Is(err, ErrTokenAlreadyUsed) {
+		t.Errorf("expected ErrTokenAlreadyUsed, got %v", err)
+	}
+}
+
+// TestToken_Base64URLSafe tests that generated tokens are URL-safe.
+func TestToken_Base64URLSafe(t *testing.T) {
+	// Generate many tokens and ensure they're all URL-safe
+	for i := 0; i < 100; i++ {
+		token, err := GenerateToken()
+		if err != nil {
+			t.Fatalf("GenerateToken failed: %v", err)
+		}
+
+		// URL-safe base64 should only contain A-Za-z0-9-_
+		for _, r := range token {
+			if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+				(r >= '0' && r <= '9') || r == '-' || r == '_') {
+				t.Errorf("token contains non-URL-safe character: %c in %s", r, token)
+			}
+		}
+	}
+}
+
+// TestToken_ConcurrentValidateWithoutConsume tests thread-safety of ValidateWithoutConsume.
+func TestToken_ConcurrentValidateWithoutConsume(t *testing.T) {
+	token, _ := NewToken(60 * time.Second)
+	value := token.Value()
+
+	var wg sync.WaitGroup
+	const numGoroutines = 100
+	successCount := 0
+	var mu sync.Mutex
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := token.ValidateWithoutConsume(value)
+			if err == nil {
+				mu.Lock()
+				successCount++
+				mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// All should succeed since ValidateWithoutConsume doesn't consume
+	if successCount != numGoroutines {
+		t.Errorf("expected all %d validations to succeed, got %d", numGoroutines, successCount)
+	}
+
+	// Token should still not be consumed
+	if token.IsConsumed() {
+		t.Error("token should not be consumed after ValidateWithoutConsume calls")
+	}
+}

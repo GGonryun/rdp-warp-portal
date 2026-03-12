@@ -110,15 +110,15 @@ func TestGenerateRDPFile_DifferentPorts(t *testing.T) {
 		expected := "full address:s:broker.example.com:" + strings.TrimLeft(string(rune(port)), "0")
 
 		// Better port check
-		expectedFull := "full address:s:broker.example.com:" + itoa(port)
+		expectedFull := "full address:s:broker.example.com:" + itoaRDP(port)
 		if !strings.Contains(string(content), expectedFull) {
 			t.Errorf("port %d: expected to contain %q", port, expected)
 		}
 	}
 }
 
-// Simple int to string for testing
-func itoa(n int) string {
+// itoaRDP is a simple int to string for testing
+func itoaRDP(n int) string {
 	if n == 0 {
 		return "0"
 	}
@@ -250,5 +250,284 @@ func TestGenerateRDPFile_AutoReconnectDisabled(t *testing.T) {
 	// Auto-reconnect should be disabled to prevent token reuse issues
 	if !strings.Contains(string(content), "autoreconnection enabled:i:0") {
 		t.Error("expected auto-reconnect to be disabled")
+	}
+}
+
+// TestGenerateRDPFile_EmptyFields tests RDP file generation with empty fields.
+func TestGenerateRDPFile_EmptyFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		params RDPFileParams
+	}{
+		{
+			name: "empty_domain",
+			params: RDPFileParams{
+				BrokerHost: "broker.example.com",
+				Port:       33400,
+				UserID:     "user",
+				TargetID:   "target",
+				Token:      "token",
+				Domain:     "",
+			},
+		},
+		{
+			name: "empty_user",
+			params: RDPFileParams{
+				BrokerHost: "broker.example.com",
+				Port:       33400,
+				UserID:     "",
+				TargetID:   "target",
+				Token:      "token",
+				Domain:     "DOMAIN",
+			},
+		},
+		{
+			name: "empty_target",
+			params: RDPFileParams{
+				BrokerHost: "broker.example.com",
+				Port:       33400,
+				UserID:     "user",
+				TargetID:   "",
+				Token:      "token",
+				Domain:     "DOMAIN",
+			},
+		},
+		{
+			name: "empty_token",
+			params: RDPFileParams{
+				BrokerHost: "broker.example.com",
+				Port:       33400,
+				UserID:     "user",
+				TargetID:   "target",
+				Token:      "",
+				Domain:     "DOMAIN",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Should not panic
+			content := GenerateRDPFile(tt.params)
+			if len(content) == 0 {
+				t.Error("RDP file content should not be empty")
+			}
+		})
+	}
+}
+
+// TestGenerateRDPFile_SpecialCharactersInUserID tests handling of special characters.
+func TestGenerateRDPFile_SpecialCharactersInUserID(t *testing.T) {
+	params := RDPFileParams{
+		BrokerHost: "broker.example.com",
+		Port:       33400,
+		UserID:     "user.name@domain.com",
+		TargetID:   "target-01",
+		Token:      "Ab12-_Cd34",
+		Domain:     "MY.DOMAIN",
+	}
+
+	content := GenerateRDPFile(params)
+	contentStr := string(content)
+
+	expectedUsername := "username:s:user.name@domain.com#target-01#Ab12-_Cd34"
+	if !strings.Contains(contentStr, expectedUsername) {
+		t.Errorf("expected username %q in content", expectedUsername)
+	}
+}
+
+// TestGenerateRDPFile_ZeroPort tests RDP file with zero port.
+func TestGenerateRDPFile_ZeroPort(t *testing.T) {
+	params := RDPFileParams{
+		BrokerHost: "broker.example.com",
+		Port:       0,
+		UserID:     "user",
+		TargetID:   "target",
+		Token:      "token",
+		Domain:     "DOMAIN",
+	}
+
+	content := GenerateRDPFile(params)
+	if !strings.Contains(string(content), "full address:s:broker.example.com:0") {
+		t.Error("expected port 0 in full address")
+	}
+}
+
+// TestGenerateRDPFile_LargePort tests RDP file with large port number.
+func TestGenerateRDPFile_LargePort(t *testing.T) {
+	params := RDPFileParams{
+		BrokerHost: "broker.example.com",
+		Port:       65535,
+		UserID:     "user",
+		TargetID:   "target",
+		Token:      "token",
+		Domain:     "DOMAIN",
+	}
+
+	content := GenerateRDPFile(params)
+	if !strings.Contains(string(content), "full address:s:broker.example.com:65535") {
+		t.Error("expected port 65535 in full address")
+	}
+}
+
+// TestGenerateRDPFile_LongValues tests RDP file with very long field values.
+func TestGenerateRDPFile_LongValues(t *testing.T) {
+	longString := strings.Repeat("a", 1000)
+
+	params := RDPFileParams{
+		BrokerHost: "broker.example.com",
+		Port:       33400,
+		UserID:     longString,
+		TargetID:   longString,
+		Token:      longString,
+		Domain:     longString,
+	}
+
+	content := GenerateRDPFile(params)
+	if len(content) == 0 {
+		t.Error("RDP file content should not be empty for long values")
+	}
+
+	// Verify the long username is present
+	expectedUsernamePrefix := "username:s:" + longString + "#"
+	if !strings.Contains(string(content), expectedUsernamePrefix) {
+		t.Error("expected long username in content")
+	}
+}
+
+// TestGenerateRDPFile_IPv6Address tests RDP file with IPv6 address.
+func TestGenerateRDPFile_IPv6Address(t *testing.T) {
+	params := RDPFileParams{
+		BrokerHost: "[::1]",
+		Port:       33400,
+		UserID:     "user",
+		TargetID:   "target",
+		Token:      "token",
+		Domain:     "DOMAIN",
+	}
+
+	content := GenerateRDPFile(params)
+	if !strings.Contains(string(content), "full address:s:[::1]:33400") {
+		t.Error("expected IPv6 address in full address")
+	}
+}
+
+// TestRDPFilename_AllSpecialChars tests filename sanitization with all special characters.
+func TestRDPFilename_AllSpecialChars(t *testing.T) {
+	// All special characters should result in "connection.rdp"
+	input := "!@#$%^&*()+=[]{};':\"<>,./?\\"
+	result := RDPFilename(input)
+	// After sanitization, all chars become underscore, but if result is all underscores,
+	// it should still have the .rdp extension
+	if !strings.HasSuffix(result, ".rdp") {
+		t.Errorf("expected .rdp suffix, got %s", result)
+	}
+}
+
+// TestRDPFilename_Unicode tests filename with unicode characters.
+func TestRDPFilename_Unicode(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"server-日本語", "server-___.rdp"},
+		{"서버-01", "__-01.rdp"},
+		{"машина", "______.rdp"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := RDPFilename(tt.input)
+			if result != tt.expected {
+				t.Errorf("RDPFilename(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestRDPFilename_MixedCase tests that case is preserved.
+func TestRDPFilename_MixedCase(t *testing.T) {
+	input := "MyServer-DC01"
+	expected := "MyServer-DC01.rdp"
+	result := RDPFilename(input)
+	if result != expected {
+		t.Errorf("RDPFilename(%q) = %q, want %q", input, result, expected)
+	}
+}
+
+// TestRDPFilename_Numbers tests that numbers are handled correctly.
+func TestRDPFilename_Numbers(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"123", "123.rdp"},
+		{"server123", "server123.rdp"},
+		{"123server", "123server.rdp"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := RDPFilename(tt.input)
+			if result != tt.expected {
+				t.Errorf("RDPFilename(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestGenerateRDPFile_AllRedirections tests that all redirection settings are present.
+func TestGenerateRDPFile_AllRedirections(t *testing.T) {
+	params := RDPFileParams{
+		BrokerHost: "broker.example.com",
+		Port:       33400,
+		UserID:     "user",
+		TargetID:   "target",
+		Token:      "token",
+		Domain:     "DOMAIN",
+	}
+
+	content := GenerateRDPFile(params)
+	contentStr := string(content)
+
+	redirections := []string{
+		"redirectclipboard:i:",
+		"redirectprinters:i:",
+		"redirectcomports:i:",
+		"redirectsmartcards:i:",
+		"redirectposdevices:i:",
+		"redirectdrives:i:",
+	}
+
+	for _, redir := range redirections {
+		if !strings.Contains(contentStr, redir) {
+			t.Errorf("expected redirection setting %q", redir)
+		}
+	}
+}
+
+// TestGenerateRDPFile_AudioSettings tests audio settings are present.
+func TestGenerateRDPFile_AudioSettings(t *testing.T) {
+	params := RDPFileParams{
+		BrokerHost: "broker.example.com",
+		Port:       33400,
+		UserID:     "user",
+		TargetID:   "target",
+		Token:      "token",
+		Domain:     "DOMAIN",
+	}
+
+	content := GenerateRDPFile(params)
+	contentStr := string(content)
+
+	audioSettings := []string{
+		"audiomode:i:",
+		"audiocapturemode:i:",
+	}
+
+	for _, setting := range audioSettings {
+		if !strings.Contains(contentStr, setting) {
+			t.Errorf("expected audio setting %q", setting)
+		}
 	}
 }

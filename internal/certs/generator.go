@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -25,15 +26,50 @@ const (
 	KeyFileName = "server.key"
 )
 
+// cryptoOps defines the interface for cryptographic operations.
+// This allows for dependency injection in tests.
+type cryptoOps interface {
+	GenerateKey(random io.Reader, bits int) (*rsa.PrivateKey, error)
+	RandInt(random io.Reader, max *big.Int) (*big.Int, error)
+	CreateCertificate(rand io.Reader, template, parent *x509.Certificate, pub, priv any) ([]byte, error)
+	MarshalPKCS8PrivateKey(key any) ([]byte, error)
+	PEMEncode(out io.Writer, b *pem.Block) error
+}
+
+// defaultCryptoOps implements cryptoOps using the standard crypto library.
+type defaultCryptoOps struct{}
+
+func (d *defaultCryptoOps) GenerateKey(random io.Reader, bits int) (*rsa.PrivateKey, error) {
+	return rsa.GenerateKey(random, bits)
+}
+
+func (d *defaultCryptoOps) RandInt(random io.Reader, max *big.Int) (*big.Int, error) {
+	return rand.Int(random, max)
+}
+
+func (d *defaultCryptoOps) CreateCertificate(randReader io.Reader, template, parent *x509.Certificate, pub, priv any) ([]byte, error) {
+	return x509.CreateCertificate(randReader, template, parent, pub, priv)
+}
+
+func (d *defaultCryptoOps) MarshalPKCS8PrivateKey(key any) ([]byte, error) {
+	return x509.MarshalPKCS8PrivateKey(key)
+}
+
+func (d *defaultCryptoOps) PEMEncode(out io.Writer, b *pem.Block) error {
+	return pem.Encode(out, b)
+}
+
 // Generator handles TLS certificate generation.
 type Generator struct {
 	certDir string
+	crypto  cryptoOps
 }
 
 // NewGenerator creates a new certificate generator.
 func NewGenerator(certDir string) *Generator {
 	return &Generator{
 		certDir: certDir,
+		crypto:  &defaultCryptoOps{},
 	}
 }
 
@@ -64,13 +100,13 @@ func (g *Generator) Generate() error {
 	}
 
 	// Generate private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, DefaultKeySize)
+	privateKey, err := g.crypto.GenerateKey(rand.Reader, DefaultKeySize)
 	if err != nil {
 		return fmt.Errorf("failed to generate private key: %w", err)
 	}
 
 	// Generate serial number
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serialNumber, err := g.crypto.RandInt(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return fmt.Errorf("failed to generate serial number: %w", err)
 	}
@@ -94,7 +130,7 @@ func (g *Generator) Generate() error {
 	}
 
 	// Create certificate
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	derBytes, err := g.crypto.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
 		return fmt.Errorf("failed to create certificate: %w", err)
 	}
@@ -107,7 +143,7 @@ func (g *Generator) Generate() error {
 	}
 	defer certFile.Close()
 
-	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+	if err := g.crypto.PEMEncode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
 		return fmt.Errorf("failed to write certificate: %w", err)
 	}
 
@@ -119,12 +155,12 @@ func (g *Generator) Generate() error {
 	}
 	defer keyFile.Close()
 
-	privBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	privBytes, err := g.crypto.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
 		return fmt.Errorf("failed to marshal private key: %w", err)
 	}
 
-	if err := pem.Encode(keyFile, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}); err != nil {
+	if err := g.crypto.PEMEncode(keyFile, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}); err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
 
