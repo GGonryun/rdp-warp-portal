@@ -3,3 +3,4 @@
 # Environment and secrets
 .env
 targets.json
+.targets.json
