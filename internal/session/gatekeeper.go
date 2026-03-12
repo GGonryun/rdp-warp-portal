@@ -60,6 +60,7 @@ type Gatekeeper struct {
 	validateToken  TokenValidator
 	closed         bool
 	activeConns    sync.WaitGroup
+	clientConns    []net.Conn // Track connections for forceful close
 	onConnected    func() // Called when a valid connection is established
 }
 
@@ -82,6 +83,7 @@ func NewGatekeeper(cfg GatekeeperConfig) *Gatekeeper {
 		allowedIP:     cfg.AllowedIP,
 		validateToken: cfg.ValidateToken,
 		onConnected:   cfg.OnConnected,
+		clientConns:   make([]net.Conn, 0),
 	}
 }
 
@@ -115,6 +117,10 @@ func (g *Gatekeeper) Start() error {
 			continue
 		}
 
+		g.mu.Lock()
+		g.clientConns = append(g.clientConns, conn)
+		g.mu.Unlock()
+
 		g.activeConns.Add(1)
 		go g.handleConnection(conn)
 	}
@@ -125,13 +131,21 @@ func (g *Gatekeeper) Stop() error {
 	g.mu.Lock()
 	g.closed = true
 	listener := g.listener
+	conns := g.clientConns
+	g.clientConns = nil
 	g.mu.Unlock()
 
+	// Close listener to stop accepting new connections
 	if listener != nil {
 		listener.Close()
 	}
 
-	// Wait for active connections to finish
+	// Forcefully close all active client connections
+	for _, conn := range conns {
+		conn.Close()
+	}
+
+	// Wait for handlers to finish (they will exit quickly now that conns are closed)
 	g.activeConns.Wait()
 
 	return nil
@@ -141,6 +155,7 @@ func (g *Gatekeeper) Stop() error {
 func (g *Gatekeeper) handleConnection(clientConn net.Conn) {
 	defer g.activeConns.Done()
 	defer clientConn.Close()
+	defer g.removeConn(clientConn)
 
 	slog.Debug("gatekeeper: new connection", "session_id", g.sessionID, "remote", clientConn.RemoteAddr())
 
@@ -161,6 +176,18 @@ func (g *Gatekeeper) handleConnection(clientConn net.Conn) {
 
 	// Bridge the connections bidirectionally - let proxy handle all protocol
 	g.bridge(clientConn, proxyConn)
+}
+
+// removeConn removes a connection from the tracked list.
+func (g *Gatekeeper) removeConn(conn net.Conn) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for i, c := range g.clientConns {
+		if c == conn {
+			g.clientConns = append(g.clientConns[:i], g.clientConns[i+1:]...)
+			return
+		}
+	}
 }
 
 // readAndParseX224 reads the X.224 Connection Request and extracts the cookie.
