@@ -88,9 +88,8 @@ func (p *ProxyManager) WaitReady(ctx context.Context, addr string, timeout time.
 	return ErrProxyNotReady
 }
 
-// StopProxy gracefully stops a proxy process.
-// First sends SIGTERM and waits for graceful shutdown.
-// If the process doesn't exit within the timeout, sends SIGKILL.
+// StopProxy kills a proxy process immediately.
+// Does not wait for the process to exit (monitor goroutine handles that).
 func (p *ProxyManager) StopProxy(cmd *exec.Cmd, timeout time.Duration) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
@@ -101,37 +100,16 @@ func (p *ProxyManager) StopProxy(cmd *exec.Cmd, timeout time.Duration) error {
 		return nil
 	}
 
-	// Send SIGTERM for graceful shutdown
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	// Kill the process immediately
+	if err := cmd.Process.Kill(); err != nil {
 		// Process might already be dead
 		if errors.Is(err, syscall.ESRCH) {
 			return nil
 		}
-		// Try to get process state
 		return err
 	}
 
-	// Wait for process with timeout
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case <-done:
-		return nil
-	case <-time.After(timeout):
-		// Force kill if still running
-		if err := cmd.Process.Kill(); err != nil {
-			// Process might already be dead
-			if !errors.Is(err, syscall.ESRCH) {
-				return err
-			}
-		}
-		// Wait for the killed process
-		<-done
-		return nil
-	}
+	return nil
 }
 
 // IsRunning checks if a proxy process is still running.

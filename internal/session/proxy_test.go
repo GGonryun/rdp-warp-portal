@@ -154,11 +154,14 @@ func TestStopProxy_GracefulShutdown(t *testing.T) {
 		t.Fatal("process should be running")
 	}
 
-	// Stop it
+	// Stop it (just sends kill signal, doesn't wait)
 	err = pm.StopProxy(cmd, time.Second)
 	if err != nil {
 		t.Errorf("StopProxy failed: %v", err)
 	}
+
+	// Wait for process to actually exit
+	cmd.Wait()
 
 	// Verify it's stopped
 	if pm.IsRunning(cmd) {
