@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
@@ -21,18 +22,55 @@ func main() {
 	installDir := flag.String("install-dir", `C:\Gateway`, "Installation directory")
 	flag.Parse()
 
-	switch {
-	case *install:
-		runInstaller(*installDir, false)
-	case *uninstall:
-		runInstaller(*installDir, true)
-	case service.IsWindowsService():
+	// When run as a Windows service, just start the service loop.
+	if service.IsWindowsService() {
 		if err := service.RunService(*configPath); err != nil {
 			log.Fatalf("service error: %v", err)
 		}
+		return
+	}
+
+	switch {
+	case *install:
+		runInstaller(*installDir, false)
+		waitForKeypress()
+	case *uninstall:
+		runInstaller(*installDir, true)
+		waitForKeypress()
+	case noFlagsProvided():
+		showUsage()
+		waitForKeypress()
 	default:
 		runInteractive(*configPath)
 	}
+}
+
+// noFlagsProvided returns true when the binary was launched with no arguments
+// (e.g. double-clicked from Explorer).
+func noFlagsProvided() bool {
+	return len(os.Args) == 1
+}
+
+// showUsage prints help text when the user double-clicks the exe.
+func showUsage() {
+	fmt.Println("========================================")
+	fmt.Println("  RDP Bastion Gateway Agent")
+	fmt.Println("========================================")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  gateway-agent.exe --install       Install and configure the bastion (run as Admin)")
+	fmt.Println("  gateway-agent.exe --uninstall     Remove bastion configuration")
+	fmt.Println("  gateway-agent.exe --config PATH   Run interactively with a config file")
+	fmt.Println()
+	fmt.Println("First time? Run:  gateway-agent.exe --install")
+	fmt.Println()
+}
+
+// waitForKeypress keeps the console window open so the user can read output.
+func waitForKeypress() {
+	fmt.Println()
+	fmt.Print("Press Enter to close...")
+	bufio.NewReader(os.Stdin).ReadBytes('\n')
 }
 
 // runInstaller extracts the embedded PowerShell scripts and runs the installer.
@@ -107,7 +145,10 @@ func runInstaller(installDir string, uninstallMode bool) {
 func runInteractive(configPath string) {
 	agent, err := service.StartAgent(configPath)
 	if err != nil {
-		log.Fatalf("failed to start agent: %v", err)
+		fmt.Fprintf(os.Stderr, "ERROR: failed to start agent: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nHave you run 'gateway-agent.exe --install' first?\n")
+		waitForKeypress()
+		os.Exit(1)
 	}
 
 	sigCh := make(chan os.Signal, 1)
