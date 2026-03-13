@@ -484,6 +484,10 @@ if ($PSCmdlet.ShouldProcess("System PATH", "Add $ffmpegDir")) {
         [Environment]::SetEnvironmentVariable("PATH", "$currentPath;$ffmpegDir", "Machine")
         Write-Host "  Added ffmpeg to system PATH" -ForegroundColor Green
     }
+    # Refresh PATH in current session so validation can find ffmpeg
+    if ($env:Path -notlike "*$ffmpegDir*") {
+        $env:Path = "$env:Path;$ffmpegDir"
+    }
 }
 
 # ------------------------------------------------------------------
@@ -643,7 +647,6 @@ if (-not (Test-Path $credentialsPath)) {
                     username = "Administrator"
                     password = "CHANGE_ME"
                     domain   = ""
-                    tags     = @("example")
                 }
             )
         } | ConvertTo-Json -Depth 4

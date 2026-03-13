@@ -51,8 +51,7 @@ Edit `C:\Gateway\config\credentials.json` with your real target hosts:
       "port": 3389,
       "username": "rdpadmin",
       "password": "YourPassword",
-      "domain": "",
-      "tags": ["production"]
+      "domain": ""
     }
   ]
 }
