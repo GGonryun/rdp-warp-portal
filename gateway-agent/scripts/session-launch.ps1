@@ -59,6 +59,7 @@ $callbackUrl    = $null
 $recordingDir   = $null
 $ffmpegPath     = $null
 $finalMp4       = $null
+$watchdogJob    = $null
 
 # ======================================================================
 # Register engine-exit handler for graceful shutdown on logoff signal
@@ -287,7 +288,24 @@ bandwidthautodetect:i:1
 
     $mstscProcess = Start-Process -FilePath "mstsc.exe" `
         -ArgumentList $rdpFile, "/f" `
-        -PassThru -Wait
+        -PassThru
+
+    # Layer 3: Watchdog — if mstsc dies and the main script hasn't cleaned up
+    # within 5 seconds, force logoff the RDS session as a safety net.
+    $watchdogJob = Start-Job -ScriptBlock {
+        param($MstscPid)
+        try {
+            $proc = Get-Process -Id $MstscPid -ErrorAction Stop
+            $proc.WaitForExit()
+        } catch {}
+        Start-Sleep -Seconds 5
+        logoff.exe
+    } -ArgumentList $mstscProcess.Id
+
+    Write-Log "Watchdog started for mstsc PID $($mstscProcess.Id)"
+
+    # Block until mstsc exits
+    $mstscProcess.WaitForExit()
 
     $mstscDuration = (Get-Date) - $mstscStart
     Write-Log "mstsc exited (code: $($mstscProcess.ExitCode), duration: $([math]::Round($mstscDuration.TotalSeconds, 1))s)"
@@ -421,7 +439,14 @@ bandwidthautodetect:i:1
         Write-Log "Removed config file"
     }
 
-    # 5. Clean up concat log
+    # 5. Stop watchdog job (cleanup completed normally, no need for forced logoff)
+    if ($watchdogJob) {
+        Stop-Job -Job $watchdogJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $watchdogJob -Force -ErrorAction SilentlyContinue
+        Write-Log "Watchdog job stopped"
+    }
+
+    # 6. Clean up concat log
     if ($recordingDir) {
         $concatLog = Join-Path $recordingDir "ffmpeg_concat.log"
         if (Test-Path $concatLog) {

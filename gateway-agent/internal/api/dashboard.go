@@ -227,7 +227,8 @@ function loadSessions() {
         var isAlive = ["pending","ready","active","disconnected","launching"].indexOf(s.status) >= 0;
         var actions = '';
         if (isAlive) {
-          actions += '<a class="btn btn-sm btn-green" href="' + API + '/sessions/' + s.session_id + '/rdp-file" title="Download RDP file">RDP</a> ';
+          actions += '<a class="btn btn-sm btn-green" href="' + API + '/sessions/' + s.session_id + '/launcher" title="Download .bat launcher (auto-login)">Connect</a> ';
+          actions += '<a class="btn btn-sm" style="background:#475569;color:#e2e8f0;" href="' + API + '/sessions/' + s.session_id + '/rdp-file" title="Download RDP file (manual password)">RDP</a> ';
           actions += '<a class="btn btn-sm btn-primary" href="' + API + '/sessions/' + s.session_id + '/monitor" title="Monitor session">Monitor</a> ';
           actions += '<button class="btn btn-sm btn-red" onclick="terminateSession(\'' + s.session_id + '\')">Kill</button>';
         } else {
@@ -277,7 +278,8 @@ function createSession() {
     var result = document.getElementById("create-result");
     result.style.display = "block";
     result.innerHTML = 'Session <strong>' + d.session_id + '</strong> created. '
-      + '<a class="btn btn-sm btn-green" href="' + API + '/sessions/' + d.session_id + '/rdp-file">Download RDP File</a> '
+      + '<a class="btn btn-sm btn-green" href="' + API + '/sessions/' + d.session_id + '/launcher">Download Launcher (.bat)</a> '
+      + '<a class="btn btn-sm" style="background:#475569;color:#e2e8f0;" href="' + API + '/sessions/' + d.session_id + '/rdp-file">RDP File</a> '
       + '<a class="btn btn-sm btn-primary" href="' + API + '/sessions/' + d.session_id + '/monitor">Monitor</a>'
       + '<br><span style="color:#94a3b8; font-size:0.8rem;">User: ' + d.gateway_user + ' | Pass: ' + d.gateway_pass + '</span>';
     toast("Session " + d.session_id + " created", "success");

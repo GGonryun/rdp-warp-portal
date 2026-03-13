@@ -125,6 +125,42 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(rdpContent))
 }
 
+// handleLauncher serves a downloadable .bat file that injects gateway
+// credentials via cmdkey, launches mstsc, and cleans up afterward. This
+// provides a one-click connection experience without manual password entry.
+func (s *Server) handleLauncher(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "session_id")
+
+	sess, err := s.mgr.GetSession(sessionID)
+	if err != nil {
+		respondError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to determine hostname")
+		return
+	}
+
+	bat := fmt.Sprintf(
+		"@echo off\r\n"+
+			"echo Connecting to bastion session %s...\r\n"+
+			"cmdkey /generic:TERMSRV/%s /user:%s /pass:%s\r\n"+
+			"mstsc /v:%s /f\r\n"+
+			"echo Cleaning up credentials...\r\n"+
+			"timeout /t 3 /nobreak >nul\r\n"+
+			"cmdkey /delete:TERMSRV/%s\r\n"+
+			"echo Done.\r\n",
+		sessionID, hostname, sess.GatewayUser, sess.GatewayPass, hostname, hostname,
+	)
+
+	w.Header().Set("Content-Type", "application/bat")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="connect-%s.bat"`, sessionID))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(bat))
+}
+
 // handleHealth returns the agent's health status including active session
 // count, available user pool slots, uptime, and disk free space.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

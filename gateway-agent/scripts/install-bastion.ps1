@@ -326,8 +326,41 @@ if ($Uninstall) {
     }
     Write-Host "  NOTE: Recordings directory preserved: $RecordingsDir" -ForegroundColor Yellow
 
+    # --- Remove desktop lockdown policies ---
+    Write-Host "[5/6] Removing desktop lockdown policies..." -ForegroundColor Yellow
+    if ($PSCmdlet.ShouldProcess("Desktop lockdown policies", "Remove")) {
+        $polRemoved = 0
+        # Task Manager
+        $sysPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+        if (Get-ItemProperty -Path $sysPolPath -Name "DisableTaskMgr" -ErrorAction SilentlyContinue) {
+            Remove-ItemProperty -Path $sysPolPath -Name "DisableTaskMgr" -Force -ErrorAction SilentlyContinue
+            $polRemoved++
+        }
+        # Explorer restrictions
+        $explorerPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+        foreach ($prop in @("NoDrives", "NoRun", "NoDesktop", "NoFind")) {
+            if (Get-ItemProperty -Path $explorerPolPath -Name $prop -ErrorAction SilentlyContinue) {
+                Remove-ItemProperty -Path $explorerPolPath -Name $prop -Force -ErrorAction SilentlyContinue
+                $polRemoved++
+            }
+        }
+        # Command Prompt
+        $winSysPolPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
+        if (Get-ItemProperty -Path $winSysPolPath -Name "DisableCMD" -ErrorAction SilentlyContinue) {
+            Remove-ItemProperty -Path $winSysPolPath -Name "DisableCMD" -Force -ErrorAction SilentlyContinue
+            $polRemoved++
+        }
+        if ($polRemoved -gt 0) {
+            Write-Host "  Removed $polRemoved desktop lockdown policies" -ForegroundColor Green
+            $removed += "Desktop lockdown policies ($polRemoved settings)"
+        } else {
+            Write-Host "  No lockdown policies found, skipping" -ForegroundColor Gray
+            $skipped += "Desktop lockdown policies (none found)"
+        }
+    }
+
     # --- Revert NLA setting ---
-    Write-Host "[5/5] Reverting RDS NLA setting..." -ForegroundColor Yellow
+    Write-Host "[6/6] Reverting RDS NLA setting..." -ForegroundColor Yellow
     $nlaPath = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
     try {
         $currentNLA = Get-ItemProperty -Path $nlaPath -Name "UserAuthentication" -ErrorAction SilentlyContinue
@@ -602,9 +635,9 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsRegPath -Name "MaxConnectionTime" -Value 28800000
     Write-Host "  Set max session time: 8 hours" -ForegroundColor Green
 
-    # When session limit reached: disconnect (don't terminate -- allows reconnect)
-    Set-ItemProperty -Path $tsRegPath -Name "fResetBroken" -Value 0
-    Write-Host "  Configured disconnect on limit (allows reconnect)" -ForegroundColor Green
+    # When initial program (session-launch.ps1) exits, terminate the session immediately
+    Set-ItemProperty -Path $tsRegPath -Name "fResetBroken" -Value 1
+    Write-Host "  Configured session termination on shell exit" -ForegroundColor Green
 
     # Disable wallpaper in sessions to reduce recording size
     Set-ItemProperty -Path $tsRegPath -Name "fNoRemoteDesktopWallpaper" -Value 1 -Type DWord -Force
@@ -621,6 +654,34 @@ if ($PSCmdlet.ShouldProcess("RDP-Tcp WinStation", "Allow alternate shell")) {
     $rdpTcpPath = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
     Set-ItemProperty -Path $rdpTcpPath -Name "fInheritInitialProgram" -Value 1 -Type DWord -Force
     Write-Host "  RDP-Tcp: allow client alternate shell" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------------
+# Step 6b: Lock down bastion desktop for session users
+# ------------------------------------------------------------------
+Write-Host "[6b/10] Locking down bastion desktop..." -ForegroundColor Yellow
+
+if ($PSCmdlet.ShouldProcess("Bastion desktop policies", "Restrict Task Manager, Explorer, cmd")) {
+    # Disable Task Manager (Ctrl+Shift+Esc)
+    $sysPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    if (-not (Test-Path $sysPolPath)) { New-Item -Path $sysPolPath -Force | Out-Null }
+    Set-ItemProperty -Path $sysPolPath -Name "DisableTaskMgr" -Value 1 -Type DWord -Force
+    Write-Host "  Disabled Task Manager" -ForegroundColor Green
+
+    # Restrict Explorer: hide drives, disable Run dialog, desktop, and Find
+    $explorerPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    if (-not (Test-Path $explorerPolPath)) { New-Item -Path $explorerPolPath -Force | Out-Null }
+    Set-ItemProperty -Path $explorerPolPath -Name "NoDrives" -Value 67108863 -Type DWord -Force
+    Set-ItemProperty -Path $explorerPolPath -Name "NoRun" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $explorerPolPath -Name "NoDesktop" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $explorerPolPath -Name "NoFind" -Value 1 -Type DWord -Force
+    Write-Host "  Restricted Explorer (no drives, no Run, no desktop, no Find)" -ForegroundColor Green
+
+    # Disable Command Prompt (cmd.exe)
+    $winSysPolPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"
+    if (-not (Test-Path $winSysPolPath)) { New-Item -Path $winSysPolPath -Force | Out-Null }
+    Set-ItemProperty -Path $winSysPolPath -Name "DisableCMD" -Value 1 -Type DWord -Force
+    Write-Host "  Disabled Command Prompt" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------
