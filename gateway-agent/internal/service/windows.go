@@ -4,6 +4,8 @@ package service
 
 import (
 	"fmt"
+	"log"
+	"os"
 
 	"golang.org/x/sys/windows/svc"
 )
@@ -19,9 +21,17 @@ type GatewayService struct {
 func (s *GatewayService) Execute(args []string, r <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	status <- svc.Status{State: svc.StartPending}
 
+	// Set up early logging so startup failures are visible.
+	os.MkdirAll(`C:\Gateway\logs`, 0755)
+	earlyLog, _ := os.OpenFile(`C:\Gateway\logs\service-startup.log`, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if earlyLog != nil {
+		log.SetOutput(earlyLog)
+		defer earlyLog.Close()
+	}
+
 	agent, err := StartAgent(s.configPath)
 	if err != nil {
-		// Return a non-zero exit code to signal failure to the SCM.
+		log.Printf("SERVICE STARTUP FAILED: %v", err)
 		return true, 1
 	}
 
