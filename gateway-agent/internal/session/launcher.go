@@ -58,18 +58,29 @@ func PrepareSession(sess *Session, cfg *config.Config, target *credentials.Targe
 }
 
 // setUserInitialProgram configures the RDS initial program for a specific
-// local user via the WMI Win32_TSEnvironmentSetting class. This ensures
-// the given program launches instead of the desktop when the user connects.
+// local user. Writes a per-user .cmd launcher and sets the initial program
+// via ADSI. The .cmd indirection keeps the ADSI property short and avoids
+// quoting issues with embedded paths.
 func setUserInitialProgram(username, program string) error {
-	// Use ADSI to set the TerminalServicesInitialProgram property on the
-	// local user account. This is the standard per-user mechanism that
-	// Windows RDS actually reads.
+	// Write a per-user .cmd launcher that RDS will execute as the shell.
+	launcherDir := `C:\Gateway\scripts`
+	launcherPath := filepath.Join(launcherDir, fmt.Sprintf("launch-%s.cmd", username))
+	launcherContent := fmt.Sprintf("@echo off\r\n%s\r\n", program)
+
+	if err := os.MkdirAll(launcherDir, 0755); err != nil {
+		return fmt.Errorf("create scripts dir: %w", err)
+	}
+	if err := os.WriteFile(launcherPath, []byte(launcherContent), 0755); err != nil {
+		return fmt.Errorf("write launcher cmd: %w", err)
+	}
+
+	// Set the .cmd as the user's initial program via ADSI
 	psCommand := fmt.Sprintf(
 		`$user = [ADSI]"WinNT://localhost/%s,user"; `+
 			`$user.PSBase.InvokeSet("TerminalServicesInitialProgram", '%s'); `+
 			`$user.PSBase.InvokeSet("TerminalServicesWorkDirectory", 'C:\Gateway'); `+
 			`$user.SetInfo()`,
-		username, program,
+		username, launcherPath,
 	)
 
 	cmd := exec.Command("powershell", "-Command", psCommand)

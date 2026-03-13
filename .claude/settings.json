@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PATH=\"/opt/homebrew/bin:$PATH\" GOOS=windows GOARCH=amd64 go build -o bin/gateway-agent.exe ./cmd/agent/)"
+    ]
+  }
+}
