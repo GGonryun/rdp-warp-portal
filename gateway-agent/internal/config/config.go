@@ -7,6 +7,19 @@ import (
 	"os"
 )
 
+// GatewayHost returns the hostname to use in RDP file gateway settings.
+// If GatewayHostname is configured, it is returned; otherwise os.Hostname() is used.
+func (c *Config) GatewayHost() string {
+	if c.GatewayHostname != "" {
+		return c.GatewayHostname
+	}
+	h, err := os.Hostname()
+	if err != nil {
+		return "localhost"
+	}
+	return h
+}
+
 // Config represents the agent.json configuration file.
 type Config struct {
 	ListenAddr            string `json:"listen_addr"`
@@ -20,6 +33,7 @@ type Config struct {
 	SessionTimeoutMinutes int    `json:"session_timeout_minutes"`
 	ReconnectGraceMinutes int    `json:"reconnect_grace_minutes"`
 	LogFile               string `json:"log_file"`
+	GatewayHostname       string `json:"gateway_hostname"`
 }
 
 // Load reads and parses the config from a JSON file.

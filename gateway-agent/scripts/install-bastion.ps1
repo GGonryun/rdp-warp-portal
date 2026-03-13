@@ -53,6 +53,7 @@ param(
     [int]$MaxSessions = 20,
     [string]$SessionUserPrefix = "gwsession",
     [int]$SessionUserCount = 20,
+    [string]$GatewayHostname = "",
     [switch]$Uninstall
 )
 
@@ -110,6 +111,43 @@ function Test-Installation {
         }
     } catch {
         $checks += @{ Name = $checkName; Status = "FAIL"; Detail = $_.Exception.Message }
+        $allPassed = $false
+    }
+
+    # --- Check 1b: RD Gateway role installed ---
+    $checkName = "RD Gateway role installed"
+    try {
+        $gwFeature = Get-WindowsFeature -Name "RDS-Gateway" -ErrorAction Stop
+        if ($gwFeature.Installed) {
+            $checks += @{ Name = $checkName; Status = "PASS"; Detail = "Installed" }
+        } else {
+            $checks += @{ Name = $checkName; Status = "FAIL"; Detail = "Not installed" }
+            $allPassed = $false
+        }
+    } catch {
+        $checks += @{ Name = $checkName; Status = "FAIL"; Detail = $_.Exception.Message }
+        $allPassed = $false
+    }
+
+    # --- Check 1c: TSGateway service running ---
+    $checkName = "TSGateway service running"
+    $tsgSvc = Get-Service -Name "TSGateway" -ErrorAction SilentlyContinue
+    if ($tsgSvc -and $tsgSvc.Status -eq "Running") {
+        $checks += @{ Name = $checkName; Status = "PASS"; Detail = "Running" }
+    } else {
+        $checks += @{ Name = $checkName; Status = "FAIL"; Detail = "Not running" }
+        $allPassed = $false
+    }
+
+    # --- Check 1d: RD Gateway SSL certificate ---
+    $checkName = "RD Gateway SSL certificate"
+    $gwCert = Get-ChildItem Cert:\LocalMachine\My |
+        Where-Object { $_.FriendlyName -like "RD Gateway*" -and $_.NotAfter -gt (Get-Date) } |
+        Select-Object -First 1
+    if ($gwCert) {
+        $checks += @{ Name = $checkName; Status = "PASS"; Detail = "Thumbprint: $($gwCert.Thumbprint.Substring(0,8))..., expires $($gwCert.NotAfter.ToString('yyyy-MM-dd'))" }
+    } else {
+        $checks += @{ Name = $checkName; Status = "FAIL"; Detail = "No valid certificate found" }
         $allPassed = $false
     }
 
@@ -184,14 +222,14 @@ function Test-Installation {
     # --- Check 6: Firewall rules ---
     $checkName = "Firewall rules"
     $missingRules = @()
-    foreach ($ruleName in @("Gateway-RDP", "Gateway-API")) {
+    foreach ($ruleName in @("Gateway-RDP", "Gateway-API", "Gateway-HTTPS")) {
         $rule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
         if (-not $rule) {
             $missingRules += $ruleName
         }
     }
     if ($missingRules.Count -eq 0) {
-        $checks += @{ Name = $checkName; Status = "PASS"; Detail = "Gateway-RDP and Gateway-API rules present" }
+        $checks += @{ Name = $checkName; Status = "PASS"; Detail = "Gateway-RDP, Gateway-API, and Gateway-HTTPS rules present" }
     } else {
         $checks += @{ Name = $checkName; Status = "FAIL"; Detail = "Missing: $($missingRules -join ', ')" }
         $allPassed = $false
@@ -236,7 +274,7 @@ if ($Uninstall) {
     $skipped = @()
 
     # --- Stop and remove GatewayAgent service ---
-    Write-Host "[1/5] Removing GatewayAgent service..." -ForegroundColor Yellow
+    Write-Host "[1/7] Removing GatewayAgent service..." -ForegroundColor Yellow
     $svc = Get-Service -Name "GatewayAgent" -ErrorAction SilentlyContinue
     if ($svc) {
         if ($PSCmdlet.ShouldProcess("GatewayAgent service", "Stop and remove")) {
@@ -255,7 +293,7 @@ if ($Uninstall) {
     }
 
     # --- Remove session user accounts ---
-    Write-Host "[2/5] Removing session user accounts..." -ForegroundColor Yellow
+    Write-Host "[2/7] Removing session user accounts..." -ForegroundColor Yellow
     $usernames = Get-SessionUsernames -Prefix $SessionUserPrefix -Count $SessionUserCount
     $usersRemoved = 0
     foreach ($username in $usernames) {
@@ -287,9 +325,40 @@ if ($Uninstall) {
         $skipped += "Session user accounts (none found)"
     }
 
+    # --- Remove RD Gateway configuration ---
+    Write-Host "[3/7] Removing RD Gateway configuration..." -ForegroundColor Yellow
+    try {
+        Import-Module RemoteDesktopServices -ErrorAction SilentlyContinue
+        if (Test-Path "RDS:\GatewayServer\CAP\Gateway-CAP") {
+            Remove-Item "RDS:\GatewayServer\CAP\Gateway-CAP" -Force -ErrorAction SilentlyContinue
+            Write-Host "  Removed CAP: Gateway-CAP" -ForegroundColor Green
+        }
+        if (Test-Path "RDS:\GatewayServer\RAP\Gateway-RAP") {
+            Remove-Item "RDS:\GatewayServer\RAP\Gateway-RAP" -Force -ErrorAction SilentlyContinue
+            Write-Host "  Removed RAP: Gateway-RAP" -ForegroundColor Green
+        }
+        Stop-Service -Name TSGateway -Force -ErrorAction SilentlyContinue
+        Set-Service -Name TSGateway -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Host "  TSGateway service stopped and disabled" -ForegroundColor Green
+        $removed += "RD Gateway policies and service"
+    } catch {
+        Write-Host "  Could not remove RD Gateway config: $($_.Exception.Message)" -ForegroundColor Yellow
+        $skipped += "RD Gateway config (error)"
+    }
+
+    # Remove RD Gateway SSL certificates
+    $gwCerts = Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.FriendlyName -like "RD Gateway*" }
+    foreach ($cert in $gwCerts) {
+        if ($PSCmdlet.ShouldProcess("SSL cert $($cert.Thumbprint)", "Remove")) {
+            Remove-Item $cert.PSPath -Force -ErrorAction SilentlyContinue
+            Write-Host "  Removed SSL certificate: $($cert.Thumbprint)" -ForegroundColor Green
+        }
+    }
+    if ($gwCerts.Count -gt 0) { $removed += "RD Gateway SSL certificate(s)" }
+
     # --- Remove firewall rules ---
-    Write-Host "[3/5] Removing firewall rules..." -ForegroundColor Yellow
-    foreach ($ruleName in @("Gateway-RDP", "Gateway-API")) {
+    Write-Host "[4/7] Removing firewall rules..." -ForegroundColor Yellow
+    foreach ($ruleName in @("Gateway-RDP", "Gateway-API", "Gateway-HTTPS")) {
         $rule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
         if ($rule) {
             if ($PSCmdlet.ShouldProcess($ruleName, "Remove firewall rule")) {
@@ -304,7 +373,7 @@ if ($Uninstall) {
     }
 
     # --- Remove install directory (NOT recordings) ---
-    Write-Host "[4/5] Removing install directory..." -ForegroundColor Yellow
+    Write-Host "[5/7] Removing install directory..." -ForegroundColor Yellow
     if (Test-Path $InstallDir) {
         if ($PSCmdlet.ShouldProcess($InstallDir, "Remove directory")) {
             # Remove ffmpeg from system PATH before deleting the directory
@@ -327,7 +396,7 @@ if ($Uninstall) {
     Write-Host "  NOTE: Recordings directory preserved: $RecordingsDir" -ForegroundColor Yellow
 
     # --- Remove desktop lockdown policies ---
-    Write-Host "[5/6] Removing desktop lockdown policies..." -ForegroundColor Yellow
+    Write-Host "[6/7] Removing desktop lockdown policies..." -ForegroundColor Yellow
     if ($PSCmdlet.ShouldProcess("Desktop lockdown policies", "Remove")) {
         $polRemoved = 0
         # Task Manager
@@ -360,7 +429,7 @@ if ($Uninstall) {
     }
 
     # --- Revert NLA setting ---
-    Write-Host "[6/6] Reverting RDS NLA setting..." -ForegroundColor Yellow
+    Write-Host "[7/7] Reverting RDS NLA setting..." -ForegroundColor Yellow
     $nlaPath = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
     try {
         $currentNLA = Get-ItemProperty -Path $nlaPath -Name "UserAuthentication" -ErrorAction SilentlyContinue
@@ -405,7 +474,7 @@ if ($Uninstall) {
     }
     Write-Host ""
     Write-Host "  Recordings preserved at: $RecordingsDir" -ForegroundColor Yellow
-    Write-Host "  RDS Session Host role was NOT removed (manual action if desired)." -ForegroundColor Yellow
+    Write-Host "  RDS Session Host and RD Gateway roles were NOT removed (manual action if desired)." -ForegroundColor Yellow
     Write-Host ""
 
     exit 0
@@ -423,7 +492,7 @@ Write-Host ""
 # ------------------------------------------------------------------
 # Step 1: Validate Prerequisites
 # ------------------------------------------------------------------
-Write-Host "[1/10] Validating prerequisites..." -ForegroundColor Yellow
+Write-Host "[1/13] Validating prerequisites..." -ForegroundColor Yellow
 
 $osInfo = Get-CimInstance Win32_OperatingSystem
 if ($osInfo.Caption -notmatch "Server") {
@@ -434,7 +503,7 @@ Write-Host "  OS: $($osInfo.Caption)" -ForegroundColor Green
 # ------------------------------------------------------------------
 # Step 2: Create Directory Structure
 # ------------------------------------------------------------------
-Write-Host "[2/10] Creating directory structure..." -ForegroundColor Yellow
+Write-Host "[2/13] Creating directory structure..." -ForegroundColor Yellow
 
 $dirs = @(
     $InstallDir,
@@ -454,7 +523,7 @@ foreach ($dir in $dirs) {
 # ------------------------------------------------------------------
 # Step 3: Install RDS Session Host Role
 # ------------------------------------------------------------------
-Write-Host "[3/10] Installing RDS Session Host role..." -ForegroundColor Yellow
+Write-Host "[3/13] Installing RDS Session Host role..." -ForegroundColor Yellow
 
 $rdsFeature = Get-WindowsFeature -Name "RDS-RD-Server"
 if (-not $rdsFeature.Installed) {
@@ -469,9 +538,115 @@ if (-not $rdsFeature.Installed) {
 }
 
 # ------------------------------------------------------------------
-# Step 4: Download and Install ffmpeg
+# Step 4: Install RD Gateway Role
 # ------------------------------------------------------------------
-Write-Host "[4/10] Installing ffmpeg..." -ForegroundColor Yellow
+Write-Host "[4/13] Installing RD Gateway role..." -ForegroundColor Yellow
+
+$gwFeature = Get-WindowsFeature -Name "RDS-Gateway"
+if (-not $gwFeature.Installed) {
+    if ($PSCmdlet.ShouldProcess("RDS-Gateway", "Install Windows feature")) {
+        $result = Install-WindowsFeature -Name "RDS-Gateway" -IncludeManagementTools
+        if ($result.RestartNeeded -eq "Yes") {
+            $needsReboot = $true
+        }
+        Write-Host "  RD Gateway role installed" -ForegroundColor Green
+    }
+} else {
+    Write-Host "  RD Gateway already installed" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------------
+# Step 5: Create Self-Signed SSL Certificate for RD Gateway
+# ------------------------------------------------------------------
+Write-Host "[5/13] Creating SSL certificate for RD Gateway..." -ForegroundColor Yellow
+
+# Resolve hostname for the certificate
+if ([string]::IsNullOrWhiteSpace($GatewayHostname)) {
+    try {
+        $GatewayHostname = [System.Net.Dns]::GetHostEntry([System.Net.Dns]::GetHostName()).HostName
+    } catch {
+        $GatewayHostname = [System.Net.Dns]::GetHostName()
+    }
+}
+Write-Host "  Gateway hostname: $GatewayHostname" -ForegroundColor Gray
+
+# Check if a suitable certificate already exists
+$existingCert = Get-ChildItem Cert:\LocalMachine\My |
+    Where-Object { $_.Subject -eq "CN=$GatewayHostname" -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
+    Sort-Object NotAfter -Descending |
+    Select-Object -First 1
+
+if (-not $existingCert) {
+    if ($PSCmdlet.ShouldProcess("Self-signed certificate for $GatewayHostname", "Create")) {
+        $cert = New-SelfSignedCertificate `
+            -DnsName $GatewayHostname `
+            -CertStoreLocation Cert:\LocalMachine\My `
+            -NotAfter (Get-Date).AddYears(5) `
+            -KeyLength 2048 `
+            -KeyExportPolicy Exportable `
+            -FriendlyName "RD Gateway - $GatewayHostname"
+        $certThumbprint = $cert.Thumbprint
+        Write-Host "  Certificate created: $($certThumbprint.Substring(0,8))... (CN=$GatewayHostname, expires $($cert.NotAfter.ToString('yyyy-MM-dd')))" -ForegroundColor Green
+    }
+} else {
+    $certThumbprint = $existingCert.Thumbprint
+    Write-Host "  Using existing certificate: $($certThumbprint.Substring(0,8))... (expires $($existingCert.NotAfter.ToString('yyyy-MM-dd')))" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------------
+# Step 6: Configure RD Gateway (CAP, RAP, SSL binding)
+# ------------------------------------------------------------------
+Write-Host "[6/13] Configuring RD Gateway..." -ForegroundColor Yellow
+
+if ($PSCmdlet.ShouldProcess("RD Gateway", "Configure SSL binding and policies")) {
+    Import-Module RemoteDesktopServices -ErrorAction Stop
+
+    # Bind the SSL certificate to the RD Gateway
+    if (Test-Path "RDS:\GatewayServer") {
+        Set-Item -Path "RDS:\GatewayServer\SSLCertificate\Thumbprint" -Value $certThumbprint -Force
+        Write-Host "  SSL certificate bound to RD Gateway" -ForegroundColor Green
+    }
+
+    # Connection Authorization Policy (who can authenticate)
+    $capName = "Gateway-CAP"
+    $existingCAP = Get-Item "RDS:\GatewayServer\CAP\$capName" -ErrorAction SilentlyContinue
+    if (-not $existingCAP) {
+        New-Item -Path "RDS:\GatewayServer\CAP" `
+            -Name $capName `
+            -UserGroups "Remote Desktop Users" `
+            -AuthMethod 1 | Out-Null
+        Write-Host "  Created CAP: $capName (Remote Desktop Users, password auth)" -ForegroundColor Green
+    } else {
+        Write-Host "  CAP already exists: $capName" -ForegroundColor Green
+    }
+
+    # Resource Authorization Policy (what they can connect to)
+    $rapName = "Gateway-RAP"
+    $existingRAP = Get-Item "RDS:\GatewayServer\RAP\$rapName" -ErrorAction SilentlyContinue
+    if (-not $existingRAP) {
+        New-Item -Path "RDS:\GatewayServer\RAP" `
+            -Name $rapName `
+            -UserGroups "Remote Desktop Users" `
+            -ComputerGroupType 2 | Out-Null
+        Write-Host "  Created RAP: $rapName (Remote Desktop Users, any resource)" -ForegroundColor Green
+    } else {
+        Write-Host "  RAP already exists: $rapName" -ForegroundColor Green
+    }
+
+    # Set max connections to match session count
+    Set-Item -Path "RDS:\GatewayServer\MaxConnections" -Value $MaxSessions -Force
+    Write-Host "  Max connections set to $MaxSessions" -ForegroundColor Green
+
+    # Ensure the TSGateway service is set to auto-start
+    Set-Service -Name TSGateway -StartupType Automatic -ErrorAction SilentlyContinue
+    Start-Service -Name TSGateway -ErrorAction SilentlyContinue
+    Write-Host "  TSGateway service started" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------------
+# Step 7: Download and Install ffmpeg
+# ------------------------------------------------------------------
+Write-Host "[7/13] Installing ffmpeg..." -ForegroundColor Yellow
 
 $ffmpegDir = "$InstallDir\bin"
 $ffmpegExe = "$ffmpegDir\ffmpeg.exe"
@@ -526,7 +701,7 @@ if ($PSCmdlet.ShouldProcess("System PATH", "Add $ffmpegDir")) {
 # ------------------------------------------------------------------
 # Step 5: Create Session User Accounts
 # ------------------------------------------------------------------
-Write-Host "[5/10] Creating session user accounts..." -ForegroundColor Yellow
+Write-Host "[8/13] Creating session user accounts..." -ForegroundColor Yellow
 
 # These are local accounts that RDS sessions run under.
 # Each concurrent session uses a different account to maintain isolation.
@@ -574,7 +749,7 @@ if ($PSCmdlet.ShouldProcess("$InstallDir\config\user-pool.json", "Write user poo
 # ------------------------------------------------------------------
 # Step 5b: Grant session users access to Gateway directories
 # ------------------------------------------------------------------
-Write-Host "[5b/10] Setting directory permissions for session users..." -ForegroundColor Yellow
+Write-Host "[8b/13] Setting directory permissions for session users..." -ForegroundColor Yellow
 
 if ($PSCmdlet.ShouldProcess("$InstallDir", "Grant 'Remote Desktop Users' read/execute")) {
     $acl = Get-Acl $InstallDir
@@ -607,7 +782,7 @@ if ($PSCmdlet.ShouldProcess("$RecordingsDir", "Grant 'Remote Desktop Users' modi
 # ------------------------------------------------------------------
 # Step 6: Configure RDS Policies
 # ------------------------------------------------------------------
-Write-Host "[6/10] Configuring RDS policies..." -ForegroundColor Yellow
+Write-Host "[9/13] Configuring RDS policies..." -ForegroundColor Yellow
 
 $tsRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
 
@@ -659,7 +834,7 @@ if ($PSCmdlet.ShouldProcess("RDP-Tcp WinStation", "Allow alternate shell")) {
 # ------------------------------------------------------------------
 # Step 6b: Lock down bastion desktop for session users
 # ------------------------------------------------------------------
-Write-Host "[6b/10] Locking down bastion desktop..." -ForegroundColor Yellow
+Write-Host "[9b/13] Locking down bastion desktop..." -ForegroundColor Yellow
 
 if ($PSCmdlet.ShouldProcess("Bastion desktop policies", "Restrict Task Manager, Explorer, cmd")) {
     # Disable Task Manager (Ctrl+Shift+Esc)
@@ -687,7 +862,7 @@ if ($PSCmdlet.ShouldProcess("Bastion desktop policies", "Restrict Task Manager, 
 # ------------------------------------------------------------------
 # Step 7: Configure Firewall
 # ------------------------------------------------------------------
-Write-Host "[7/10] Configuring firewall rules..." -ForegroundColor Yellow
+Write-Host "[10/13] Configuring firewall rules..." -ForegroundColor Yellow
 
 # RDP (should already be open, but ensure it)
 $rdpRule = Get-NetFirewallRule -DisplayName "Gateway-RDP" -ErrorAction SilentlyContinue
@@ -715,10 +890,23 @@ if (-not $apiRule) {
     Write-Host "  Firewall rule Gateway-API already exists" -ForegroundColor Gray
 }
 
+# RD Gateway (HTTPS / port 443)
+$gwRule = Get-NetFirewallRule -DisplayName "Gateway-HTTPS" -ErrorAction SilentlyContinue
+if (-not $gwRule) {
+    if ($PSCmdlet.ShouldProcess("Gateway-HTTPS (TCP 443)", "Create firewall rule")) {
+        New-NetFirewallRule -DisplayName "Gateway-HTTPS" `
+            -Direction Inbound -Protocol TCP -LocalPort 443 `
+            -Action Allow -Profile Any | Out-Null
+        Write-Host "  Opened port 443 (RD Gateway)" -ForegroundColor Green
+    }
+} else {
+    Write-Host "  Firewall rule Gateway-HTTPS already exists" -ForegroundColor Gray
+}
+
 # ------------------------------------------------------------------
-# Step 8: Deploy Session Launch Script
+# Step 11: Deploy Session Launch Script
 # ------------------------------------------------------------------
-Write-Host "[8/10] Deploying session launch script..." -ForegroundColor Yellow
+Write-Host "[11/13] Deploying session launch script..." -ForegroundColor Yellow
 
 # The session-launch.ps1 is deployed by the installer.
 # See Section 6 of the spec for the full script.
@@ -738,7 +926,7 @@ if (-not (Test-Path $launchScriptPath)) {
 # ------------------------------------------------------------------
 # Step 9: Seed Example Credentials File
 # ------------------------------------------------------------------
-Write-Host "[9/10] Creating example credentials file..." -ForegroundColor Yellow
+Write-Host "[12/13] Creating example credentials file..." -ForegroundColor Yellow
 
 $credentialsPath = "$InstallDir\config\credentials.json"
 if (-not (Test-Path $credentialsPath)) {
@@ -767,7 +955,7 @@ if (-not (Test-Path $credentialsPath)) {
 # ------------------------------------------------------------------
 # Step 10: Install Gateway Agent Service
 # ------------------------------------------------------------------
-Write-Host "[10/10] Installing Gateway Agent service..." -ForegroundColor Yellow
+Write-Host "[13/13] Installing Gateway Agent service..." -ForegroundColor Yellow
 
 $agentExe = "$InstallDir\bin\gateway-agent.exe"
 $agentConfig = "$InstallDir\config\agent.json"
@@ -786,6 +974,7 @@ if ($PSCmdlet.ShouldProcess($agentConfig, "Write agent configuration")) {
         session_timeout_minutes = 60
         reconnect_grace_minutes = 5
         log_file                = "$InstallDir\logs\gateway-agent.log"
+        gateway_hostname        = $GatewayHostname
     } | ConvertTo-Json -Depth 3
     $config | Out-File -Encoding UTF8 $agentConfig
     Write-Host "  Agent config written: $agentConfig" -ForegroundColor Green
@@ -823,6 +1012,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Install directory:  $InstallDir" -ForegroundColor White
 Write-Host "  Recordings:         $RecordingsDir" -ForegroundColor White
+Write-Host "  RD Gateway:         https://${GatewayHostname}:443" -ForegroundColor White
 Write-Host "  API endpoint:       http://$(hostname):$AgentPort" -ForegroundColor White
 Write-Host "  Session users:      ${SessionUserPrefix}001 - ${SessionUserPrefix}$('{0:D3}' -f $SessionUserCount)" -ForegroundColor White
 Write-Host "  Credentials file:   $credentialsPath" -ForegroundColor White

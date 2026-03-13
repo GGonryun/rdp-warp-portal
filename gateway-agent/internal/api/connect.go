@@ -66,32 +66,36 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	rdpFileURL := fmt.Sprintf("/api/v1/sessions/%s/rdp-file", sessionID)
 
+	gatewayHost := s.cfg.GatewayHost()
+
 	switch platform {
 	case "windows":
 		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"platform": "windows",
 			"launch_command": fmt.Sprintf(
-				"cmdkey /generic:TERMSRV/%s /user:%s /pass:%s; mstsc /v:%s; timeout /t 5; cmdkey /delete:TERMSRV/%s",
-				hostname, sess.GatewayUser, sess.GatewayPass, hostname, hostname,
+				"cmdkey /generic:%s /user:%s /pass:%s & cmdkey /generic:TERMSRV/%s /user:%s /pass:%s & mstsc /v:%s & timeout /t 5 & cmdkey /delete:%s & cmdkey /delete:TERMSRV/%s",
+				gatewayHost, sess.GatewayUser, sess.GatewayPass,
+				hostname, sess.GatewayUser, sess.GatewayPass,
+				hostname,
+				gatewayHost, hostname,
 			),
 			"rdp_file_url": rdpFileURL,
+			"note":         "Use the RDP file or .bat launcher for gateway connections.",
 		})
 
 	case "macos":
 		respondJSON(w, http.StatusOK, map[string]interface{}{
-			"platform": "macos",
-			"launch_command": fmt.Sprintf(
-				"open rdp://full%%20address=s:%s:3389&username=s:%s",
-				hostname, sess.GatewayUser,
-			),
+			"platform":     "macos",
 			"rdp_file_url": rdpFileURL,
+			"note":         "Download the RDP file and open with Microsoft Remote Desktop. Gateway settings are embedded in the file.",
+			"gateway_host": gatewayHost,
 		})
 
 	default:
 		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"platform": platform,
 			"host":     hostname,
-			"port":     3389,
+			"port":     443,
 			"username": sess.GatewayUser,
 			"password": sess.GatewayPass,
 		})
@@ -114,9 +118,21 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	gatewayHost := s.cfg.GatewayHost()
 	rdpContent := fmt.Sprintf(
-		"full address:s:%s:3389\r\nusername:s:%s\r\nprompt for credentials:i:0\r\nauthentication level:i:0\r\nredirectclipboards:i:1\r\nredirectdrives:i:0\r\nalternate shell:s:%s\r\nshell working directory:s:C:\\Gateway\r\n",
-		hostname, sess.GatewayUser, sess.AlternateShell,
+		"full address:s:%s\r\n"+
+			"username:s:%s\r\n"+
+			"prompt for credentials:i:0\r\n"+
+			"authentication level:i:0\r\n"+
+			"redirectclipboards:i:1\r\n"+
+			"redirectdrives:i:0\r\n"+
+			"alternate shell:s:%s\r\n"+
+			"shell working directory:s:C:\\Gateway\r\n"+
+			"gatewayhostname:s:%s\r\n"+
+			"gatewayusagemethod:i:2\r\n"+
+			"gatewaycredentialssource:i:4\r\n"+
+			"gatewayprofileusagemethod:i:1\r\n",
+		hostname, sess.GatewayUser, sess.AlternateShell, gatewayHost,
 	)
 
 	w.Header().Set("Content-Type", "application/x-rdp")
@@ -143,16 +159,43 @@ func (s *Server) handleLauncher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	gatewayHost := s.cfg.GatewayHost()
 	bat := fmt.Sprintf(
 		"@echo off\r\n"+
 			"echo Connecting to bastion session %s...\r\n"+
+			"echo.\r\n"+
+			"REM Store credentials for RD Gateway authentication\r\n"+
+			"cmdkey /generic:%s /user:%s /pass:%s\r\n"+
+			"REM Store credentials for RDP server authentication\r\n"+
 			"cmdkey /generic:TERMSRV/%s /user:%s /pass:%s\r\n"+
-			"mstsc /v:%s /f\r\n"+
+			"REM Write temporary RDP file with gateway settings\r\n"+
+			"set RDPFILE=%%TEMP%%\\gateway-session-%s.rdp\r\n"+
+			"(\r\n"+
+			"echo full address:s:%s\r\n"+
+			"echo username:s:%s\r\n"+
+			"echo prompt for credentials:i:0\r\n"+
+			"echo authentication level:i:0\r\n"+
+			"echo redirectclipboards:i:1\r\n"+
+			"echo redirectdrives:i:0\r\n"+
+			"echo gatewayhostname:s:%s\r\n"+
+			"echo gatewayusagemethod:i:2\r\n"+
+			"echo gatewaycredentialssource:i:4\r\n"+
+			"echo gatewayprofileusagemethod:i:1\r\n"+
+			") > %%RDPFILE%%\r\n"+
+			"mstsc %%RDPFILE%% /f\r\n"+
 			"echo Cleaning up credentials...\r\n"+
 			"timeout /t 3 /nobreak >nul\r\n"+
+			"cmdkey /delete:%s\r\n"+
 			"cmdkey /delete:TERMSRV/%s\r\n"+
+			"del /q %%RDPFILE%% 2>nul\r\n"+
 			"echo Done.\r\n",
-		sessionID, hostname, sess.GatewayUser, sess.GatewayPass, hostname, hostname,
+		sessionID,
+		gatewayHost, sess.GatewayUser, sess.GatewayPass,
+		hostname, sess.GatewayUser, sess.GatewayPass,
+		sessionID,
+		hostname, sess.GatewayUser,
+		gatewayHost,
+		gatewayHost, hostname,
 	)
 
 	w.Header().Set("Content-Type", "application/bat")

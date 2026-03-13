@@ -36,7 +36,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		TargetHost:  sess.TargetHost,
 		TargetName:  sess.TargetName,
 		GatewayHost: hostname,
-		GatewayPort: 3389,
+		GatewayPort: 443,
 		GatewayUser: sess.GatewayUser,
 		GatewayPass: sess.GatewayPass,
 		ExpiresAt:   sess.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
