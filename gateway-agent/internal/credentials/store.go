@@ -1,6 +1,7 @@
 package credentials
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -105,6 +106,9 @@ func (s *Store) load() error {
 	if err != nil {
 		return fmt.Errorf("read credentials file: %w", err)
 	}
+
+	// Strip UTF-8 BOM that PowerShell's Out-File adds by default.
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 
 	var cf CredentialsFile
 	if err := json.Unmarshal(data, &cf); err != nil {

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,9 @@ func NewUserPool(cfg *config.Config) (*UserPool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read user pool file: %w", err)
 	}
+
+	// Strip UTF-8 BOM that PowerShell's Out-File adds by default.
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 
 	var poolCfg UserPoolConfig
 	if err := json.Unmarshal(data, &poolCfg); err != nil {
