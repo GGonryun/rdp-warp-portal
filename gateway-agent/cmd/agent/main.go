@@ -19,6 +19,7 @@ func main() {
 	configPath := flag.String("config", `C:\Gateway\config\agent.json`, "Path to config file")
 	install := flag.Bool("install", false, "Install and configure the bastion server (run as Administrator)")
 	uninstall := flag.Bool("uninstall", false, "Uninstall the bastion configuration")
+	upgrade := flag.Bool("upgrade", false, "Stop service, update binary + scripts, restart service")
 	installDir := flag.String("install-dir", `C:\Gateway`, "Installation directory")
 	flag.Parse()
 
@@ -31,6 +32,9 @@ func main() {
 	}
 
 	switch {
+	case *upgrade:
+		runUpgrade(*installDir)
+		waitForKeypress()
 	case *install:
 		runInstaller(*installDir, false)
 		waitForKeypress()
@@ -59,6 +63,7 @@ func showUsage() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  gateway-agent.exe --install       Install and configure the bastion (run as Admin)")
+	fmt.Println("  gateway-agent.exe --upgrade       Stop service, update binary + scripts, restart")
 	fmt.Println("  gateway-agent.exe --uninstall     Remove bastion configuration")
 	fmt.Println("  gateway-agent.exe --config PATH   Run interactively with a config file")
 	fmt.Println()
@@ -138,6 +143,68 @@ func runInstaller(installDir string, uninstallMode bool) {
 		fmt.Println("  2. Start the service:  sc start GatewayAgent")
 		fmt.Println("  3. Verify:             curl http://localhost:8080/health")
 	}
+}
+
+// runUpgrade stops the GatewayAgent service, copies the current binary and
+// embedded scripts to the install directory, and restarts the service.
+func runUpgrade(installDir string) {
+	binDir := filepath.Join(installDir, "bin")
+	scriptsDir := filepath.Join(installDir, "scripts")
+
+	// 1. Stop the service (ignore error if not running)
+	fmt.Println("Stopping GatewayAgent service...")
+	stop := exec.Command("sc", "stop", "GatewayAgent")
+	stop.Stdout = os.Stdout
+	stop.Stderr = os.Stderr
+	stop.Run()
+
+	// Brief pause to let the service release the binary
+	fmt.Println("Waiting for service to stop...")
+	exec.Command("powershell", "-Command", "Start-Sleep -Seconds 2").Run()
+
+	// 2. Copy this binary
+	self, err := os.Executable()
+	if err != nil {
+		log.Fatalf("failed to find own executable: %v", err)
+	}
+	destBin := filepath.Join(binDir, "gateway-agent.exe")
+	if normPath(self) != normPath(destBin) {
+		fmt.Printf("Copying binary to %s\n", destBin)
+		data, err := os.ReadFile(self)
+		if err != nil {
+			log.Fatalf("failed to read own binary: %v", err)
+		}
+		if err := os.WriteFile(destBin, data, 0755); err != nil {
+			log.Fatalf("failed to write binary: %v", err)
+		}
+	} else {
+		fmt.Println("Binary already in install location, skipping copy")
+	}
+
+	// 3. Update embedded scripts
+	launchPath := filepath.Join(scriptsDir, "session-launch.ps1")
+	if err := os.WriteFile(launchPath, scripts.SessionLaunchScript, 0644); err != nil {
+		log.Fatalf("failed to write session-launch.ps1: %v", err)
+	}
+	fmt.Printf("Updated %s\n", launchPath)
+
+	installerPath := filepath.Join(scriptsDir, "install-bastion.ps1")
+	if err := os.WriteFile(installerPath, scripts.InstallScript, 0644); err != nil {
+		log.Fatalf("failed to write install-bastion.ps1: %v", err)
+	}
+	fmt.Printf("Updated %s\n", installerPath)
+
+	// 4. Start the service
+	fmt.Println("Starting GatewayAgent service...")
+	start := exec.Command("sc", "start", "GatewayAgent")
+	start.Stdout = os.Stdout
+	start.Stderr = os.Stderr
+	if err := start.Run(); err != nil {
+		log.Fatalf("failed to start service: %v", err)
+	}
+
+	fmt.Println()
+	fmt.Println("Upgrade complete!")
 }
 
 // runInteractive starts the agent in the foreground and blocks until a
