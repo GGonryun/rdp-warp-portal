@@ -47,7 +47,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$InstallDir = "C:\Gateway",
-    [string]$RecordingsDir = "D:\recordings",
+    [string]$RecordingsDir = "C:\Gateway\recordings",
     [string]$FFmpegVersion = "7.1",
     [int]$AgentPort = 8080,
     [int]$MaxSessions = 20,
