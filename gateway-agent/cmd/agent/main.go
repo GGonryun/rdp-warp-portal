@@ -20,6 +20,7 @@ func main() {
 	install := flag.Bool("install", false, "Install and configure the bastion server (run as Administrator)")
 	uninstall := flag.Bool("uninstall", false, "Uninstall the bastion configuration")
 	upgrade := flag.Bool("upgrade", false, "Stop service, update binary + scripts, restart service")
+	stop := flag.Bool("stop", false, "Stop the GatewayAgent service")
 	installDir := flag.String("install-dir", `C:\Gateway`, "Installation directory")
 	flag.Parse()
 
@@ -32,13 +33,18 @@ func main() {
 	}
 
 	switch {
+	case *stop:
+		stopService()
+		waitForKeypress()
 	case *upgrade:
 		runUpgrade(*installDir)
 		waitForKeypress()
 	case *install:
+		stopService()
 		runInstaller(*installDir, false)
 		waitForKeypress()
 	case *uninstall:
+		stopService()
 		runInstaller(*installDir, true)
 		waitForKeypress()
 	case noFlagsProvided():
@@ -64,6 +70,7 @@ func showUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  gateway-agent.exe --install       Install and configure the bastion (run as Admin)")
 	fmt.Println("  gateway-agent.exe --upgrade       Stop service, update binary + scripts, restart")
+	fmt.Println("  gateway-agent.exe --stop          Stop the GatewayAgent service")
 	fmt.Println("  gateway-agent.exe --uninstall     Remove bastion configuration")
 	fmt.Println("  gateway-agent.exe --config PATH   Run interactively with a config file")
 	fmt.Println()
@@ -76,6 +83,19 @@ func waitForKeypress() {
 	fmt.Println()
 	fmt.Print("Press Enter to close...")
 	bufio.NewReader(os.Stdin).ReadBytes('\n')
+}
+
+// stopService stops the GatewayAgent Windows service if it is running.
+func stopService() {
+	fmt.Println("Stopping GatewayAgent service...")
+	cmd := exec.Command("sc.exe", "stop", "GatewayAgent")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Run() // ignore error if not running
+
+	// Brief pause to let the service release the binary
+	fmt.Println("Waiting for service to stop...")
+	exec.Command("powershell", "-Command", "Start-Sleep -Seconds 2").Run()
 }
 
 // runInstaller extracts the embedded PowerShell scripts and runs the installer.
@@ -151,18 +171,9 @@ func runUpgrade(installDir string) {
 	binDir := filepath.Join(installDir, "bin")
 	scriptsDir := filepath.Join(installDir, "scripts")
 
-	// 1. Stop the service (ignore error if not running)
-	fmt.Println("Stopping GatewayAgent service...")
-	stop := exec.Command("sc", "stop", "GatewayAgent")
-	stop.Stdout = os.Stdout
-	stop.Stderr = os.Stderr
-	stop.Run()
+	stopService()
 
-	// Brief pause to let the service release the binary
-	fmt.Println("Waiting for service to stop...")
-	exec.Command("powershell", "-Command", "Start-Sleep -Seconds 2").Run()
-
-	// 2. Copy this binary
+	// 1. Copy this binary
 	self, err := os.Executable()
 	if err != nil {
 		log.Fatalf("failed to find own executable: %v", err)

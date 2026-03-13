@@ -4,10 +4,42 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 )
+
+// getDiskFreeGB returns the free disk space in GB for the drive containing
+// the given path. Uses wmic on Windows; returns 0 on error.
+func getDiskFreeGB(path string) float64 {
+	if len(path) < 2 || path[1] != ':' {
+		return 0
+	}
+	drive := strings.ToUpper(path[:2])
+
+	cmd := exec.Command("wmic", "logicaldisk", "where", fmt.Sprintf("DeviceID='%s'", drive), "get", "FreeSpace", "/value")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0
+	}
+
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "FreeSpace=") {
+			val := strings.TrimPrefix(line, "FreeSpace=")
+			val = strings.TrimSpace(val)
+			bytes, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				return 0
+			}
+			return bytes / (1024 * 1024 * 1024)
+		}
+	}
+	return 0
+}
 
 // handleConnect returns platform-specific RDP connection instructions for a
 // session. The optional "platform" query parameter (default "windows")
@@ -98,10 +130,7 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	uptimeSeconds := time.Since(s.mgr.StartTime()).Seconds()
 
-	// TODO: Implement cross-platform disk free space check for the
-	// recordings directory. For now, return 0 to avoid platform-specific
-	// imports (e.g. golang.org/x/sys/windows).
-	var recordingsDirFreeGB float64
+	recordingsDirFreeGB := getDiskFreeGB(s.cfg.RecordingsDir)
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status":                 "ok",

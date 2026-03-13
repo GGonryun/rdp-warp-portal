@@ -66,8 +66,8 @@ func setUserInitialProgram(username, program string) error {
 	// Windows RDS actually reads.
 	psCommand := fmt.Sprintf(
 		`$user = [ADSI]"WinNT://localhost/%s,user"; `+
-			`$user.PSBase.InvokeSet("TerminalServicesInitialProgram", "%s"); `+
-			`$user.PSBase.InvokeSet("TerminalServicesWorkDirectory", "C:\Gateway"); `+
+			`$user.PSBase.InvokeSet("TerminalServicesInitialProgram", '%s'); `+
+			`$user.PSBase.InvokeSet("TerminalServicesWorkDirectory", 'C:\Gateway'); `+
 			`$user.SetInfo()`,
 		username, program,
 	)
