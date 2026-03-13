@@ -430,10 +430,12 @@ if ($Uninstall) {
 
     # --- Remove HKLM Run key ---
     $runKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-    if (Get-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -ErrorAction SilentlyContinue) {
-        Remove-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -Force -ErrorAction SilentlyContinue
-        Write-Host "  Removed HKLM Run key: GatewayLauncher" -ForegroundColor Green
-    }
+    Remove-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -Force -ErrorAction SilentlyContinue
+    Write-Host "  Removed HKLM Run key (GatewayLauncher)" -ForegroundColor Green
+
+    # --- Remove RemoteApp allowlist (legacy) ---
+    $tsAppPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
+    Remove-ItemProperty -Path $tsAppPath -Name "fDisabledAllowList" -Force -ErrorAction SilentlyContinue
 
     # --- Revert NLA setting ---
     Write-Host "[7/7] Reverting RDS NLA setting..." -ForegroundColor Yellow
@@ -786,6 +788,23 @@ if ($PSCmdlet.ShouldProcess("$RecordingsDir", "Grant 'Remote Desktop Users' modi
     Write-Host "  Granted Remote Desktop Users modify on $RecordingsDir" -ForegroundColor Green
 }
 
+# Session users need write access to the logs directory for session-launch.ps1 logging
+$logsDir = "$InstallDir\logs"
+if (-not (Test-Path $logsDir)) { New-Item -ItemType Directory -Force -Path $logsDir | Out-Null }
+if ($PSCmdlet.ShouldProcess("$logsDir", "Grant 'Remote Desktop Users' modify")) {
+    $acl = Get-Acl $logsDir
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "Remote Desktop Users",
+        "Modify",
+        "ContainerInherit,ObjectInherit",
+        "None",
+        "Allow"
+    )
+    $acl.AddAccessRule($rule)
+    Set-Acl -Path $logsDir -AclObject $acl
+    Write-Host "  Granted Remote Desktop Users modify on $logsDir" -ForegroundColor Green
+}
+
 # ------------------------------------------------------------------
 # Step 6: Configure RDS Policies
 # ------------------------------------------------------------------
@@ -817,16 +836,16 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsRegPath -Name "MaxConnectionTime" -Value 28800000
     Write-Host "  Set max session time: 8 hours" -ForegroundColor Green
 
-    # With HKLM Run approach the shell is explorer.exe; session cleanup
-    # (logoff after target disconnect) is handled by session-launch.ps1's watchdog.
-    Set-ItemProperty -Path $tsRegPath -Name "fResetBroken" -Value 0
-    Write-Host "  Configured fResetBroken=0 (watchdog handles session cleanup)" -ForegroundColor Green
+    # With RemoteApp, session cleanup is handled by session-launch.ps1.
+    # fResetBroken=1 ensures disconnected sessions are logged off automatically.
+    Set-ItemProperty -Path $tsRegPath -Name "fResetBroken" -Value 1
+    Write-Host "  Configured fResetBroken=1 (auto-reset disconnected sessions)" -ForegroundColor Green
 
     # Disable wallpaper in sessions to reduce recording size
     Set-ItemProperty -Path $tsRegPath -Name "fNoRemoteDesktopWallpaper" -Value 1 -Type DWord -Force
     Write-Host "  Disabled wallpaper in RDS sessions" -ForegroundColor Green
 
-    # Clean up legacy InitialProgram / fInheritInitialProgram values (replaced by HKLM Run key)
+    # Clean up legacy InitialProgram / fInheritInitialProgram values
     foreach ($legacyProp in @("fInheritInitialProgram", "InitialProgram", "WorkDirectory")) {
         Remove-ItemProperty -Path $tsRegPath -Name $legacyProp -ErrorAction SilentlyContinue
     }
@@ -836,26 +855,48 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     }
     Write-Host "  Cleaned up legacy InitialProgram registry values" -ForegroundColor Green
 
-    # Register HKLM Run key so session-router.ps1 launches at every interactive logon.
-    # NOTE: Do NOT use -WindowStyle Hidden here — mstsc.exe needs a visible desktop
-    # context to render. Hidden windows cause mstsc to exit immediately.
+    # Remove legacy HKLM Run key (replaced by RemoteApp)
     $runKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-    Set-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" `
-        -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallDir\scripts\session-router.ps1`"" `
-        -Type String -Force
-    Write-Host "  Registered HKLM Run key: GatewayLauncher" -ForegroundColor Green
+    Remove-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -Force -ErrorAction SilentlyContinue
+
+    # Enable RemoteApp: allow any program to be launched as a RemoteApp.
+    # The RDP file specifies session-launch.ps1 as the RemoteApp program.
+    # This is how CyberArk PSM works — no desktop, no shell, just the app.
+    $tsAppPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
+    if (-not (Test-Path $tsAppPath)) {
+        New-Item -Path $tsAppPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $tsAppPath -Name "fDisabledAllowList" -Value 1 -Type DWord -Force
+    Write-Host "  Enabled RemoteApp allow-all (TSAppAllowList\fDisabledAllowList=1)" -ForegroundColor Green
+
+    # Restart TermService so RemoteApp registry changes take effect immediately.
+    # This MUST succeed — without it, RemoteApp connections will be refused.
+    Write-Host "  Restarting TermService to apply RemoteApp settings..." -ForegroundColor Gray
+    try {
+        Restart-Service -Name "TermService" -Force
+        Start-Sleep -Seconds 3  # Give TermService time to fully reinitialize
+        $tsSvc = Get-Service -Name "TermService"
+        if ($tsSvc.Status -ne "Running") {
+            throw "TermService is not running after restart (status: $($tsSvc.Status))"
+        }
+        Write-Host "  TermService restarted successfully (status: $($tsSvc.Status))" -ForegroundColor Green
+    } catch {
+        Write-Host "  WARNING: TermService restart failed: $_" -ForegroundColor Red
+        Write-Host "  RemoteApp will NOT work until TermService is restarted!" -ForegroundColor Red
+        Write-Host "  Try manually: Restart-Service -Name 'TermService' -Force" -ForegroundColor Yellow
+    }
 }
 
-# --- RDS Security: Keep NLA enabled (standard credential prompt) ---
-# NLA is the default and shows the RDP client's credential dialog before
-# the session starts. This is the expected behavior for the connect flow.
-if ($PSCmdlet.ShouldProcess("RDS security", "Ensure NLA is enabled")) {
+# --- RDS Security: RDP Security Layer (no NLA) ---
+# Disable NLA so the RDP file credential prompt works cleanly with pool user
+# tokens. The user enters their token in the mstsc dialog, connects directly.
+if ($PSCmdlet.ShouldProcess("RDS security", "Set RDP Security Layer (no NLA)")) {
     $rdpTcpPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
-    Set-ItemProperty -Path $rdpTcpPath -Name "SecurityLayer" -Value 2 -Type DWord
-    Set-ItemProperty -Path $rdpTcpPath -Name "UserAuthentication" -Value 1 -Type DWord
-    Write-Host "  NLA enabled (SecurityLayer=2, UserAuthentication=1)" -ForegroundColor Green
+    Set-ItemProperty -Path $rdpTcpPath -Name "SecurityLayer" -Value 0 -Type DWord
+    Set-ItemProperty -Path $rdpTcpPath -Name "UserAuthentication" -Value 0 -Type DWord
+    Write-Host "  RDP Security Layer (SecurityLayer=0, UserAuthentication=0, no NLA)" -ForegroundColor Green
 
-    # Remove any Group Policy overrides that might have disabled NLA
+    # Remove any Group Policy overrides
     $tsPolPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
     if (Test-Path $tsPolPath) {
         Remove-ItemProperty -Path $tsPolPath -Name "SecurityLayer" -ErrorAction SilentlyContinue
@@ -965,14 +1006,49 @@ param(
     [string]$ConfigPath
 )
 
+# ======================================================================
+# PRE-FLIGHT LOGGING — set up file logging BEFORE anything that could
+# fail, so we always have diagnostics even if the script crashes early.
+# This runs before $ErrorActionPreference = "Stop" intentionally.
+# ======================================================================
+$script:LogFile = "C:\Gateway\logs\session-launch-$($env:USERNAME)-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+$logDir = Split-Path $script:LogFile -Parent
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null }
+
+function Write-Log {
+    param([string]$Message)
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [session-launch] $Message"
+    Write-Host $line
+    try { $line | Out-File -Append -Encoding UTF8 $script:LogFile } catch {}
+}
+
+# Log immediately so we know the script was invoked
+Write-Log "========== SESSION LAUNCH STARTED =========="
+Write-Log "Args: ConfigPath=$ConfigPath"
+Write-Log "User: $env:USERNAME | Computer: $env:COMPUTERNAME | PID: $PID"
+Write-Log "PowerShell: $($PSVersionTable.PSVersion) | OS: $([Environment]::OSVersion.VersionString)"
+
 $ErrorActionPreference = "Stop"
 
 # ======================================================================
-# Logging
+# Hide the PowerShell console window — user should only see mstsc.
+# In RemoteApp mode each top-level window is remoted separately;
+# hiding this window means only the mstsc window appears on the client.
 # ======================================================================
-function Write-Log {
-    param([string]$Message)
-    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [session-launch] $Message"
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Console {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ -ErrorAction SilentlyContinue
+$consoleHwnd = [Win32Console]::GetConsoleWindow()
+if ($consoleHwnd -ne [IntPtr]::Zero) {
+    [Win32Console]::ShowWindow($consoleHwnd, 0) | Out-Null  # SW_HIDE
+    Write-Log "Console window hidden"
+} else {
+    Write-Log "No console window to hide"
 }
 
 # ======================================================================
@@ -1006,7 +1082,6 @@ $callbackUrl    = $null
 $recordingDir   = $null
 $ffmpegPath     = $null
 $finalMp4       = $null
-$watchdogJob    = $null
 
 # ======================================================================
 # Register engine-exit handler for graceful shutdown on logoff signal
@@ -1237,19 +1312,7 @@ bandwidthautodetect:i:1
         -ArgumentList $rdpFile, "/f" `
         -PassThru
 
-    # Layer 3: Watchdog — if mstsc dies and the main script hasn't cleaned up
-    # within 5 seconds, force logoff the RDS session as a safety net.
-    $watchdogJob = Start-Job -ScriptBlock {
-        param($MstscPid)
-        try {
-            $proc = Get-Process -Id $MstscPid -ErrorAction Stop
-            $proc.WaitForExit()
-        } catch {}
-        Start-Sleep -Seconds 5
-        logoff.exe
-    } -ArgumentList $mstscProcess.Id
-
-    Write-Log "Watchdog started for mstsc PID $($mstscProcess.Id)"
+    Write-Log "mstsc launched (PID: $($mstscProcess.Id)) — waiting for it to exit"
 
     # Block until mstsc exits
     $mstscProcess.WaitForExit()
@@ -1290,11 +1353,7 @@ bandwidthautodetect:i:1
         & cmdkey /delete:$credTarget 2>$null
     }
 
-    Write-Log "Session ended — logging off immediately"
-
-    # Logoff immediately — user never sees the gateway desktop.
-    # MP4 concatenation from HLS segments is deferred to the Go agent.
-    logoff.exe
+    Write-Log "Session ended — logoff DISABLED for debugging (user stays on gateway desktop)"
 
 } catch {
     # ------------------------------------------------------------------
@@ -1341,14 +1400,7 @@ bandwidthautodetect:i:1
         Write-Log "Removed config file"
     }
 
-    # 5. Stop watchdog job (cleanup completed normally, no need for forced logoff)
-    if ($watchdogJob) {
-        Stop-Job -Job $watchdogJob -ErrorAction SilentlyContinue
-        Remove-Job -Job $watchdogJob -Force -ErrorAction SilentlyContinue
-        Write-Log "Watchdog job stopped"
-    }
-
-    # 6. Clean up concat log
+    # 5. Clean up concat log
     if ($recordingDir) {
         $concatLog = Join-Path $recordingDir "ffmpeg_concat.log"
         if (Test-Path $concatLog) {
@@ -1370,55 +1422,11 @@ exit 0
     Write-Host "  Deployed session-launch.ps1 ($($launchScriptContent.Length) bytes)" -ForegroundColor Green
 }
 
+# Clean up legacy session-router.ps1 (not needed with RemoteApp)
 $routerPath = "$InstallDir\scripts\session-router.ps1"
-if ($PSCmdlet.ShouldProcess($routerPath, "Deploy session router script")) {
-    $routerContent = @'
-# session-router.ps1 — Gateway logon dispatcher
-# Launched via HKLM Run key for every interactive logon.
-# For pool users with active session: runs session-launch.ps1 then logoff.
-# For admin users: exits silently so they get a normal desktop.
-
-$logFile = "C:\Gateway\logs\session-router.log"
-function Write-RouterLog {
-    param([string]$Message)
-    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $entry = "[$ts] [session-router] $Message"
-    try { $entry | Out-File -Append -Encoding UTF8 $logFile } catch { }
-    Write-Host $entry
-}
-
-# Ensure log directory exists
-New-Item -ItemType Directory -Force -Path "C:\Gateway\logs" 2>$null | Out-Null
-
-Write-RouterLog "Logon detected for user: $($env:USERNAME)"
-
-$launcherPath = "C:\Gateway\scripts\launch-$($env:USERNAME).ps1"
-
-if (Test-Path $launcherPath) {
-    Write-RouterLog "Found launcher: $launcherPath"
-
-    # Wait for desktop to fully initialize before launching mstsc
-    Start-Sleep -Seconds 3
-
-    try {
-        Write-RouterLog "Executing launcher..."
-        & powershell.exe -ExecutionPolicy Bypass -File $launcherPath
-        Write-RouterLog "Launcher exited normally"
-    } catch {
-        Write-RouterLog "ERROR: Launcher failed: $_"
-    }
-
-    # session-launch.ps1 handles logoff itself, but as a safety net:
-    Start-Sleep -Seconds 2
-    Write-RouterLog "Safety logoff"
-    logoff.exe
-} else {
-    Write-RouterLog "No launcher file — admin session, exiting silently"
-    exit 0
-}
-'@
-    $routerContent | Out-File -Encoding UTF8 $routerPath -Force
-    Write-Host "  Deployed session-router.ps1" -ForegroundColor Green
+if (Test-Path $routerPath) {
+    Remove-Item $routerPath -Force -ErrorAction SilentlyContinue
+    Write-Host "  Removed legacy session-router.ps1" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------

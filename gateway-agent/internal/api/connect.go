@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -76,9 +76,10 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	connectPageTemplate.Execute(w, data)
 }
 
-// handleRDPFile serves a downloadable .rdp file for the given session.
-// The file uses direct RDP with the username pre-filled and CredSSP
-// support disabled so the client does not prompt for credentials locally.
+// handleRDPFile serves a downloadable .rdp file configured as a RemoteApp.
+// The RemoteApp launches session-launch.ps1 which injects target credentials,
+// starts mstsc to the target, and records the session. The user never sees the
+// gateway desktop — only the target machine's mstsc window appears.
 func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
 
@@ -88,31 +89,34 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to determine hostname")
-		return
-	}
+	hostname := s.cfg.GatewayHost()
+
+	configPath := filepath.Join(s.cfg.RecordingsDir, sess.ID, "session-config.json")
 
 	rdpContent := fmt.Sprintf(
 		"full address:s:%s:3389\r\n"+
 			"username:s:%s\r\n"+
 			"authentication level:i:0\r\n"+
-			"prompt for credentials:i:0\r\n"+
+			"prompt for credentials:i:1\r\n"+
 			"enablecredsspsupport:i:0\r\n"+
+			"remoteapplicationmode:i:1\r\n"+
+			"remoteapplicationprogram:s:C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n"+
+			"remoteapplicationname:s:P0rtal Gateway\r\n"+
+			"remoteapplicationcmdline:s:-NoExit -ExecutionPolicy Bypass -File \"%s\" -ConfigPath \"%s\"\r\n"+
+			"disableremoteappcapscheck:i:1\r\n"+
+			"desktopwidth:i:1920\r\n"+
+			"desktopheight:i:1080\r\n"+
 			"redirectclipboards:i:1\r\n"+
 			"redirectdrives:i:0\r\n"+
 			"audiomode:i:0\r\n"+
 			"audiocapturemode:i:0\r\n"+
-			"screen mode id:i:2\r\n"+
-			"desktopwidth:i:1920\r\n"+
-			"desktopheight:i:1080\r\n"+
 			"use multimon:i:0\r\n"+
 			"autoreconnection enabled:i:1\r\n"+
 			"connection type:i:7\r\n"+
 			"networkautodetect:i:1\r\n"+
 			"bandwidthautodetect:i:1\r\n",
 		hostname, sess.GatewayUser,
+		s.cfg.SessionScript, configPath,
 	)
 
 	w.Header().Set("Content-Type", "application/x-rdp")

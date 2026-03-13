@@ -4,7 +4,9 @@
       "Bash(PATH=\"/opt/homebrew/bin:$PATH\" GOOS=windows GOARCH=amd64 go build -o bin/gateway-agent.exe ./cmd/agent/)",
       "Read(//usr/local/go/bin/**)",
       "Read(//opt/homebrew/Cellar/go/1.25.6/libexec/bin/**)",
-      "Bash(/opt/homebrew/bin/go build:*)"
+      "Bash(/opt/homebrew/bin/go build:*)",
+      "Bash(export PATH=\"$HOME/go/bin:/usr/local/go/bin:$PATH\")",
+      "Read(//Users/miguelcampos/**)"
     ]
   }
 }

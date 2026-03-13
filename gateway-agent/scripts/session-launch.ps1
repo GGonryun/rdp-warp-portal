@@ -18,14 +18,49 @@ param(
     [string]$ConfigPath
 )
 
+# ======================================================================
+# PRE-FLIGHT LOGGING — set up file logging BEFORE anything that could
+# fail, so we always have diagnostics even if the script crashes early.
+# This runs before $ErrorActionPreference = "Stop" intentionally.
+# ======================================================================
+$script:LogFile = "C:\Gateway\logs\session-launch-$($env:USERNAME)-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+$logDir = Split-Path $script:LogFile -Parent
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir -ErrorAction SilentlyContinue | Out-Null }
+
+function Write-Log {
+    param([string]$Message)
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [session-launch] $Message"
+    Write-Host $line
+    try { $line | Out-File -Append -Encoding UTF8 $script:LogFile } catch {}
+}
+
+# Log immediately so we know the script was invoked
+Write-Log "========== SESSION LAUNCH STARTED =========="
+Write-Log "Args: ConfigPath=$ConfigPath"
+Write-Log "User: $env:USERNAME | Computer: $env:COMPUTERNAME | PID: $PID"
+Write-Log "PowerShell: $($PSVersionTable.PSVersion) | OS: $([Environment]::OSVersion.VersionString)"
+
 $ErrorActionPreference = "Stop"
 
 # ======================================================================
-# Logging
+# Hide the PowerShell console window — user should only see mstsc.
+# In RemoteApp mode each top-level window is remoted separately;
+# hiding this window means only the mstsc window appears on the client.
 # ======================================================================
-function Write-Log {
-    param([string]$Message)
-    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [session-launch] $Message"
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32Console {
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@ -ErrorAction SilentlyContinue
+$consoleHwnd = [Win32Console]::GetConsoleWindow()
+if ($consoleHwnd -ne [IntPtr]::Zero) {
+    [Win32Console]::ShowWindow($consoleHwnd, 0) | Out-Null  # SW_HIDE
+    Write-Log "Console window hidden"
+} else {
+    Write-Log "No console window to hide"
 }
 
 # ======================================================================
@@ -59,7 +94,6 @@ $callbackUrl    = $null
 $recordingDir   = $null
 $ffmpegPath     = $null
 $finalMp4       = $null
-$watchdogJob    = $null
 
 # ======================================================================
 # Register engine-exit handler for graceful shutdown on logoff signal
@@ -290,19 +324,7 @@ bandwidthautodetect:i:1
         -ArgumentList $rdpFile, "/f" `
         -PassThru
 
-    # Layer 3: Watchdog — if mstsc dies and the main script hasn't cleaned up
-    # within 5 seconds, force logoff the RDS session as a safety net.
-    $watchdogJob = Start-Job -ScriptBlock {
-        param($MstscPid)
-        try {
-            $proc = Get-Process -Id $MstscPid -ErrorAction Stop
-            $proc.WaitForExit()
-        } catch {}
-        Start-Sleep -Seconds 5
-        logoff.exe
-    } -ArgumentList $mstscProcess.Id
-
-    Write-Log "Watchdog started for mstsc PID $($mstscProcess.Id)"
+    Write-Log "mstsc launched (PID: $($mstscProcess.Id)) — waiting for it to exit"
 
     # Block until mstsc exits
     $mstscProcess.WaitForExit()
@@ -343,11 +365,7 @@ bandwidthautodetect:i:1
         & cmdkey /delete:$credTarget 2>$null
     }
 
-    Write-Log "Session ended — logging off immediately"
-
-    # Logoff immediately — user never sees the gateway desktop.
-    # MP4 concatenation from HLS segments is deferred to the Go agent.
-    logoff.exe
+    Write-Log "Session ended — logoff DISABLED for debugging (user stays on gateway desktop)"
 
 } catch {
     # ------------------------------------------------------------------
@@ -394,14 +412,7 @@ bandwidthautodetect:i:1
         Write-Log "Removed config file"
     }
 
-    # 5. Stop watchdog job (cleanup completed normally, no need for forced logoff)
-    if ($watchdogJob) {
-        Stop-Job -Job $watchdogJob -ErrorAction SilentlyContinue
-        Remove-Job -Job $watchdogJob -Force -ErrorAction SilentlyContinue
-        Write-Log "Watchdog job stopped"
-    }
-
-    # 6. Clean up concat log
+    # 5. Clean up concat log
     if ($recordingDir) {
         $concatLog = Join-Path $recordingDir "ffmpeg_concat.log"
         if (Test-Path $concatLog) {
