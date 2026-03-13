@@ -13,8 +13,7 @@ import (
 )
 
 // PrepareSession creates the recording directory, writes the session config
-// JSON, sets the user's initial program to the session launch script, and
-// marks the session as ready.
+// JSON, writes the per-user launcher script, and marks the session as ready.
 func PrepareSession(sess *Session, cfg *config.Config, target *credentials.Target) error {
 	recordingDir := filepath.Join(cfg.RecordingsDir, sess.ID)
 	if err := os.MkdirAll(recordingDir, 0755); err != nil {
@@ -48,45 +47,27 @@ func PrepareSession(sess *Session, cfg *config.Config, target *credentials.Targe
 		`powershell.exe -ExecutionPolicy Bypass -File "%s" -ConfigPath "%s"`,
 		cfg.SessionScript, configPath,
 	)
-	if err := setUserInitialProgram(sess.GatewayUser, script); err != nil {
-		return fmt.Errorf("set initial program: %w", err)
+	if err := writeUserLauncher(sess.GatewayUser, script); err != nil {
+		return fmt.Errorf("write user launcher: %w", err)
 	}
 
-	sess.AlternateShell = script
 	sess.Status = StatusReady
 	return nil
 }
 
-// setUserInitialProgram configures the RDS initial program for a specific
-// local user. Writes a per-user .cmd launcher and sets the initial program
-// via ADSI. The .cmd indirection keeps the ADSI property short and avoids
-// quoting issues with embedded paths.
-func setUserInitialProgram(username, program string) error {
-	// Write a per-user .cmd launcher that RDS will execute as the shell.
+// writeUserLauncher writes a per-user .ps1 launcher at
+// C:\Gateway\scripts\launch-<username>.ps1. The HKLM Run key triggers
+// session-router.ps1 at logon, which checks for this file and runs it.
+func writeUserLauncher(username, program string) error {
 	launcherDir := `C:\Gateway\scripts`
-	launcherPath := filepath.Join(launcherDir, fmt.Sprintf("launch-%s.cmd", username))
-	launcherContent := fmt.Sprintf("@echo off\r\n%s\r\n", program)
+	launcherPath := filepath.Join(launcherDir, fmt.Sprintf("launch-%s.ps1", username))
+	launcherContent := fmt.Sprintf("# Session launcher for %s\r\n%s\r\n", username, program)
 
 	if err := os.MkdirAll(launcherDir, 0755); err != nil {
 		return fmt.Errorf("create scripts dir: %w", err)
 	}
 	if err := os.WriteFile(launcherPath, []byte(launcherContent), 0755); err != nil {
-		return fmt.Errorf("write launcher cmd: %w", err)
-	}
-
-	// Set the .cmd as the user's initial program via ADSI
-	psCommand := fmt.Sprintf(
-		`$user = [ADSI]"WinNT://localhost/%s,user"; `+
-			`$user.PSBase.InvokeSet("TerminalServicesInitialProgram", '%s'); `+
-			`$user.PSBase.InvokeSet("TerminalServicesWorkDirectory", 'C:\Gateway'); `+
-			`$user.SetInfo()`,
-		username, launcherPath,
-	)
-
-	cmd := exec.Command("powershell", "-Command", psCommand)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("set initial program via ADSI: %w: %s", err, string(output))
+		return fmt.Errorf("write launcher ps1: %w", err)
 	}
 	return nil
 }

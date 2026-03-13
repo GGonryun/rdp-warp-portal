@@ -77,9 +77,8 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRDPFile serves a downloadable .rdp file for the given session.
-// The file uses direct RDP (no gateway) with the username pre-filled.
-// SecurityLayer=0 on the server ensures the user sees a standard Windows
-// login prompt where they paste the 6-character session token.
+// The file uses direct RDP with the username pre-filled and CredSSP
+// support disabled so the client does not prompt for credentials locally.
 func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
 
@@ -100,8 +99,7 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"username:s:%s\r\n"+
 			"authentication level:i:0\r\n"+
 			"prompt for credentials:i:0\r\n"+
-			"enablecredsspdelegation:i:1\r\n"+
-			"negotiate security layer:i:0\r\n"+
+			"enablecredsspsupport:i:0\r\n"+
 			"redirectclipboards:i:1\r\n"+
 			"redirectdrives:i:0\r\n"+
 			"audiomode:i:0\r\n"+
@@ -121,70 +119,6 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="connect-%s.rdp"`, sessionID))
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(rdpContent))
-}
-
-// handleLauncher serves a downloadable .bat file that injects gateway
-// credentials via cmdkey, launches mstsc, and cleans up afterward. This
-// provides a one-click connection experience without manual password entry.
-func (s *Server) handleLauncher(w http.ResponseWriter, r *http.Request) {
-	sessionID := chi.URLParam(r, "session_id")
-
-	sess, err := s.mgr.GetSession(sessionID)
-	if err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
-		return
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to determine hostname")
-		return
-	}
-
-	gatewayHost := s.cfg.GatewayHost()
-	bat := fmt.Sprintf(
-		"@echo off\r\n"+
-			"echo Connecting to bastion session %s...\r\n"+
-			"echo.\r\n"+
-			"REM Store credentials for RD Gateway authentication\r\n"+
-			"cmdkey /generic:%s /user:.\\%s /pass:%s\r\n"+
-			"REM Store credentials for RDP server authentication\r\n"+
-			"cmdkey /generic:TERMSRV/%s /user:.\\%s /pass:%s\r\n"+
-			"REM Write temporary RDP file with gateway settings\r\n"+
-			"set RDPFILE=%%TEMP%%\\gateway-session-%s.rdp\r\n"+
-			"(\r\n"+
-			"echo full address:s:%s\r\n"+
-			"echo username:s:.\\%s\r\n"+
-			"echo prompt for credentials:i:0\r\n"+
-			"echo authentication level:i:0\r\n"+
-			"echo redirectclipboards:i:1\r\n"+
-			"echo redirectdrives:i:0\r\n"+
-			"echo gatewayhostname:s:%s\r\n"+
-			"echo gatewayusagemethod:i:2\r\n"+
-			"echo gatewaycredentialssource:i:4\r\n"+
-			"echo gatewayprofileusagemethod:i:1\r\n"+
-			"echo promptcredentialonce:i:1\r\n"+
-			") > %%RDPFILE%%\r\n"+
-			"mstsc %%RDPFILE%% /f\r\n"+
-			"echo Cleaning up credentials...\r\n"+
-			"timeout /t 3 /nobreak >nul\r\n"+
-			"cmdkey /delete:%s\r\n"+
-			"cmdkey /delete:TERMSRV/%s\r\n"+
-			"del /q %%RDPFILE%% 2>nul\r\n"+
-			"echo Done.\r\n",
-		sessionID,
-		gatewayHost, sess.GatewayUser, sess.GatewayPass,
-		hostname, sess.GatewayUser, sess.GatewayPass,
-		sessionID,
-		hostname, sess.GatewayUser,
-		gatewayHost,
-		gatewayHost, hostname,
-	)
-
-	w.Header().Set("Content-Type", "application/bat")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="connect-%s.bat"`, sessionID))
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(bat))
 }
 
 // handleHealth returns the agent's health status including active session

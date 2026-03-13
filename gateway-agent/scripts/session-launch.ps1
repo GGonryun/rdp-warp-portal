@@ -310,24 +310,27 @@ bandwidthautodetect:i:1
     $mstscDuration = (Get-Date) - $mstscStart
     Write-Log "mstsc exited (code: $($mstscProcess.ExitCode), duration: $([math]::Round($mstscDuration.TotalSeconds, 1))s)"
 
+    # ------------------------------------------------------------------
+    # mstsc exited — logoff IMMEDIATELY so user never sees gateway desktop.
+    # Send status callback first (fast), stop ffmpeg, clean credentials,
+    # then logoff. MP4 concatenation is deferred to the Go agent service.
+    # ------------------------------------------------------------------
+
     # Check for early exit indicating connection failure
     if ($mstscDuration.TotalSeconds -lt 10 -and $mstscProcess.ExitCode -ne 0) {
         Write-Log "ERROR: mstsc exited within 10 seconds with code $($mstscProcess.ExitCode) — likely failed to connect to target"
         Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID `
             -Body @{ status = "failed"; error = "mstsc connection failed (exit code $($mstscProcess.ExitCode))" }
-        # Don't exit 1 here — fall through to finally for cleanup
-        # But set a flag so we skip the "completed" callback
         $sessionFailed = $true
+    } else {
+        Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID `
+            -Body @{ status = "completed" }
     }
 
-    # ------------------------------------------------------------------
-    # Stop ffmpeg
-    # ------------------------------------------------------------------
+    # Stop ffmpeg (fire-and-forget, no waiting for flush)
     if ($ffmpegProcess -and -not $ffmpegProcess.HasExited) {
         Write-Log "Stopping ffmpeg (PID: $($ffmpegProcess.Id))"
         Stop-Process -Id $ffmpegProcess.Id -Force -ErrorAction SilentlyContinue
-        # Give ffmpeg a moment to flush buffers
-        Start-Sleep -Seconds 2
     }
 
     if ($ffmpegWatcher) {
@@ -335,64 +338,16 @@ bandwidthautodetect:i:1
         Remove-Job -Job $ffmpegWatcher -Force -ErrorAction SilentlyContinue
     }
 
-    # Check if ffmpeg died mid-session
-    $ffmpegCrashLog = Join-Path $recordingDir "ffmpeg_crash.log"
-    if (Test-Path $ffmpegCrashLog) {
-        $crashInfo = Get-Content $ffmpegCrashLog -Raw
-        Write-Log "WARNING: ffmpeg crashed during recording: $crashInfo"
-        Remove-Item $ffmpegCrashLog -Force -ErrorAction SilentlyContinue
+    # Clean up credentials immediately
+    if ($credTarget) {
+        & cmdkey /delete:$credTarget 2>$null
     }
 
-    Write-Log "ffmpeg stopped"
+    Write-Log "Session ended — logging off immediately"
 
-    # ------------------------------------------------------------------
-    # Concatenate HLS segments to final MP4
-    # ------------------------------------------------------------------
-    $playlistPath = Join-Path $recordingDir "playlist.m3u8"
-    $finalMp4     = Join-Path $recordingDir "recording.mp4"
-
-    if (Test-Path $playlistPath) {
-        Write-Log "Concatenating HLS segments to MP4..."
-        try {
-            $concatArgs = @(
-                "-y",
-                "-i", $playlistPath,
-                "-c", "copy",
-                $finalMp4
-            )
-            $concatProcess = Start-Process -FilePath $ffmpegPath `
-                -ArgumentList $concatArgs `
-                -Wait -NoNewWindow -PassThru `
-                -RedirectStandardError (Join-Path $recordingDir "ffmpeg_concat.log")
-
-            if (Test-Path $finalMp4) {
-                $fileSize = (Get-Item $finalMp4).Length
-                Write-Log "Recording saved: $finalMp4 ($([math]::Round($fileSize / 1MB, 2)) MB)"
-                # Clean up HLS segments
-                Remove-Item (Join-Path $recordingDir "segment_*.ts") -Force -ErrorAction SilentlyContinue
-                Remove-Item $playlistPath -Force -ErrorAction SilentlyContinue
-            } else {
-                Write-Log "WARNING: MP4 concatenation produced no output file"
-            }
-        } catch {
-            Write-Log "WARNING: MP4 concatenation failed: $_"
-        }
-    } else {
-        Write-Log "No HLS playlist found — skipping concatenation"
-    }
-
-    # ------------------------------------------------------------------
-    # Notify agent: session completed (unless we already reported failure)
-    # ------------------------------------------------------------------
-    if (-not $sessionFailed) {
-        $completedBody = @{ status = "completed" }
-        if ($finalMp4 -and (Test-Path $finalMp4)) {
-            $completedBody.recording_path = $finalMp4
-        }
-        Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID -Body $completedBody
-    }
-
-    Write-Log "Session ended"
+    # Logoff immediately — user never sees the gateway desktop.
+    # MP4 concatenation from HLS segments is deferred to the Go agent.
+    logoff.exe
 
 } catch {
     # ------------------------------------------------------------------

@@ -32,7 +32,6 @@ type Session struct {
 	EndedAt        *time.Time        `json:"ended_at,omitempty"`
 	ExpiresAt      time.Time         `json:"expires_at"`
 	RecordingPath  string            `json:"recording_path,omitempty"`
-	AlternateShell string            `json:"-"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	FFmpegPID      int               `json:"-"`
 }

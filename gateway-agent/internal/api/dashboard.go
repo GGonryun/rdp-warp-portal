@@ -466,8 +466,7 @@ function loadSessions() {
 
       var acts = "";
       if (alive) {
-        acts += "<button class='btn btn-sm btn-green' onclick=\"dlLauncher('" + s.session_id + "')\" title='Download .bat launcher'>Connect</button>";
-        acts += "<button class='btn btn-sm btn-ghost' onclick=\"dlRDP('" + s.session_id + "')\" title='Download RDP file'>RDP</button>";
+        acts += "<button class='btn btn-sm btn-green' onclick=\"dlRDP('" + s.session_id + "')\" title='Download RDP file'>Connect</button>";
         acts += "<button class='btn btn-sm btn-primary' onclick=\"openMonitorModal('" + s.session_id + "')\" title='Live monitor'>Monitor</button>";
         acts += "<button class='btn btn-sm btn-red btn-icon' onclick=\"killSession('" + s.session_id + "')\" title='Terminate'>&times;</button>";
       } else if (s.status === "completed") {
@@ -751,8 +750,7 @@ function stopPlayer() {
 }
 
 // ===================== ACTIONS =====================
-function dlLauncher(id) { window.location.href = API + "/sessions/" + id + "/launcher"; }
-function dlRDP(id)      { window.location.href = API + "/sessions/" + id + "/rdp-file"; }
+function dlRDP(id) { window.location.href = API + "/sessions/" + id + "/rdp-file"; }
 
 function killSession(id) {
   if (!confirm("Terminate session " + id.substring(0, 12) + "?")) return;

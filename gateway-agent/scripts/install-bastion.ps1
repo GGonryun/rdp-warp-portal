@@ -428,6 +428,13 @@ if ($Uninstall) {
         }
     }
 
+    # --- Remove HKLM Run key ---
+    $runKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    if (Get-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -ErrorAction SilentlyContinue) {
+        Remove-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -Force -ErrorAction SilentlyContinue
+        Write-Host "  Removed HKLM Run key: GatewayLauncher" -ForegroundColor Green
+    }
+
     # --- Revert NLA setting ---
     Write-Host "[7/7] Reverting RDS NLA setting..." -ForegroundColor Yellow
     $nlaPath = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
@@ -810,54 +817,50 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsRegPath -Name "MaxConnectionTime" -Value 28800000
     Write-Host "  Set max session time: 8 hours" -ForegroundColor Green
 
-    # When initial program (session-launch.ps1) exits, terminate the session immediately
-    Set-ItemProperty -Path $tsRegPath -Name "fResetBroken" -Value 1
-    Write-Host "  Configured session termination on shell exit" -ForegroundColor Green
+    # With HKLM Run approach the shell is explorer.exe; session cleanup
+    # (logoff after target disconnect) is handled by session-launch.ps1's watchdog.
+    Set-ItemProperty -Path $tsRegPath -Name "fResetBroken" -Value 0
+    Write-Host "  Configured fResetBroken=0 (watchdog handles session cleanup)" -ForegroundColor Green
 
     # Disable wallpaper in sessions to reduce recording size
     Set-ItemProperty -Path $tsRegPath -Name "fNoRemoteDesktopWallpaper" -Value 1 -Type DWord -Force
     Write-Host "  Disabled wallpaper in RDS sessions" -ForegroundColor Green
 
-    # Allow alternate shell / initial program from RDP client
-    # fInheritInitialProgram = 1 means "use the program specified by the client or user profile"
-    Set-ItemProperty -Path $tsRegPath -Name "fInheritInitialProgram" -Value 1 -Type DWord -Force
-    Write-Host "  Enabled initial program inheritance (alternate shell)" -ForegroundColor Green
-}
-
-# Enable "Always use client-provided startup program" on the RDP-Tcp listener
-if ($PSCmdlet.ShouldProcess("RDP-Tcp WinStation", "Allow alternate shell")) {
+    # Clean up legacy InitialProgram / fInheritInitialProgram values (replaced by HKLM Run key)
+    foreach ($legacyProp in @("fInheritInitialProgram", "InitialProgram", "WorkDirectory")) {
+        Remove-ItemProperty -Path $tsRegPath -Name $legacyProp -ErrorAction SilentlyContinue
+    }
     $rdpTcpPath = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
-    Set-ItemProperty -Path $rdpTcpPath -Name "fInheritInitialProgram" -Value 1 -Type DWord -Force
-    Write-Host "  RDP-Tcp: allow client alternate shell" -ForegroundColor Green
+    foreach ($legacyProp in @("fInheritInitialProgram", "InitialProgram", "WorkDirectory")) {
+        Remove-ItemProperty -Path $rdpTcpPath -Name $legacyProp -ErrorAction SilentlyContinue
+    }
+    Write-Host "  Cleaned up legacy InitialProgram registry values" -ForegroundColor Green
+
+    # Register HKLM Run key so session-router.ps1 launches at every interactive logon
+    $runKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    Set-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" `
+        -Value "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\scripts\session-router.ps1`"" `
+        -Type String -Force
+    Write-Host "  Registered HKLM Run key: GatewayLauncher" -ForegroundColor Green
 }
 
-# --- RDS Security: Use RDP security layer instead of NLA ---
-# NLA shows a separate CredSSP dialog before the session starts.
-# RDP security layer shows the standard Windows login screen inside the session.
-# This is required for the .rdp file username pre-fill to work smoothly.
-if ($PSCmdlet.ShouldProcess("RDS security layer", "Configure for minimal prompts")) {
+# --- RDS Security: Keep NLA enabled (standard credential prompt) ---
+# NLA is the default and shows the RDP client's credential dialog before
+# the session starts. This is the expected behavior for the connect flow.
+if ($PSCmdlet.ShouldProcess("RDS security", "Ensure NLA is enabled")) {
     $rdpTcpPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
-    Set-ItemProperty -Path $rdpTcpPath -Name "SecurityLayer" -Value 0 -Type DWord
-    Set-ItemProperty -Path $rdpTcpPath -Name "UserAuthentication" -Value 0 -Type DWord
-    Write-Host "  Set RDP security layer (NLA disabled)" -ForegroundColor Green
+    Set-ItemProperty -Path $rdpTcpPath -Name "SecurityLayer" -Value 2 -Type DWord
+    Set-ItemProperty -Path $rdpTcpPath -Name "UserAuthentication" -Value 1 -Type DWord
+    Write-Host "  NLA enabled (SecurityLayer=2, UserAuthentication=1)" -ForegroundColor Green
 
-    # Also set via Group Policy path (takes precedence over WinStation settings)
+    # Remove any Group Policy overrides that might have disabled NLA
     $tsPolPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
-    New-Item -Path $tsPolPath -Force -ErrorAction SilentlyContinue | Out-Null
-    Set-ItemProperty -Path $tsPolPath -Name "SecurityLayer" -Value 0 -Type DWord
-    Set-ItemProperty -Path $tsPolPath -Name "fPromptForPassword" -Value 0 -Type DWord
-    Set-ItemProperty -Path $tsPolPath -Name "AuthenticationLevel" -Value 0 -Type DWord
-    Write-Host "  Set Group Policy: no password prompt, no auth verification" -ForegroundColor Green
-
-    # Suppress legal notice banners that appear before login
-    $systemPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
-    Set-ItemProperty -Path $systemPolPath -Name "legalnoticecaption" -Value "" -Type String
-    Set-ItemProperty -Path $systemPolPath -Name "legalnoticetext" -Value "" -Type String
-    Write-Host "  Cleared legal notice banners" -ForegroundColor Green
-
-    # Restart terminal services to apply all changes
-    Restart-Service -Name "TermService" -Force
-    Write-Host "  Restarted Terminal Services" -ForegroundColor Green
+    if (Test-Path $tsPolPath) {
+        Remove-ItemProperty -Path $tsPolPath -Name "SecurityLayer" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $tsPolPath -Name "fPromptForPassword" -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $tsPolPath -Name "AuthenticationLevel" -ErrorAction SilentlyContinue
+        Write-Host "  Removed Group Policy NLA overrides" -ForegroundColor Green
+    }
 }
 
 # ------------------------------------------------------------------
@@ -1252,24 +1255,27 @@ bandwidthautodetect:i:1
     $mstscDuration = (Get-Date) - $mstscStart
     Write-Log "mstsc exited (code: $($mstscProcess.ExitCode), duration: $([math]::Round($mstscDuration.TotalSeconds, 1))s)"
 
+    # ------------------------------------------------------------------
+    # mstsc exited — logoff IMMEDIATELY so user never sees gateway desktop.
+    # Send status callback first (fast), stop ffmpeg, clean credentials,
+    # then logoff. MP4 concatenation is deferred to the Go agent service.
+    # ------------------------------------------------------------------
+
     # Check for early exit indicating connection failure
     if ($mstscDuration.TotalSeconds -lt 10 -and $mstscProcess.ExitCode -ne 0) {
         Write-Log "ERROR: mstsc exited within 10 seconds with code $($mstscProcess.ExitCode) — likely failed to connect to target"
         Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID `
             -Body @{ status = "failed"; error = "mstsc connection failed (exit code $($mstscProcess.ExitCode))" }
-        # Don't exit 1 here — fall through to finally for cleanup
-        # But set a flag so we skip the "completed" callback
         $sessionFailed = $true
+    } else {
+        Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID `
+            -Body @{ status = "completed" }
     }
 
-    # ------------------------------------------------------------------
-    # Stop ffmpeg
-    # ------------------------------------------------------------------
+    # Stop ffmpeg (fire-and-forget, no waiting for flush)
     if ($ffmpegProcess -and -not $ffmpegProcess.HasExited) {
         Write-Log "Stopping ffmpeg (PID: $($ffmpegProcess.Id))"
         Stop-Process -Id $ffmpegProcess.Id -Force -ErrorAction SilentlyContinue
-        # Give ffmpeg a moment to flush buffers
-        Start-Sleep -Seconds 2
     }
 
     if ($ffmpegWatcher) {
@@ -1277,64 +1283,16 @@ bandwidthautodetect:i:1
         Remove-Job -Job $ffmpegWatcher -Force -ErrorAction SilentlyContinue
     }
 
-    # Check if ffmpeg died mid-session
-    $ffmpegCrashLog = Join-Path $recordingDir "ffmpeg_crash.log"
-    if (Test-Path $ffmpegCrashLog) {
-        $crashInfo = Get-Content $ffmpegCrashLog -Raw
-        Write-Log "WARNING: ffmpeg crashed during recording: $crashInfo"
-        Remove-Item $ffmpegCrashLog -Force -ErrorAction SilentlyContinue
+    # Clean up credentials immediately
+    if ($credTarget) {
+        & cmdkey /delete:$credTarget 2>$null
     }
 
-    Write-Log "ffmpeg stopped"
+    Write-Log "Session ended — logging off immediately"
 
-    # ------------------------------------------------------------------
-    # Concatenate HLS segments to final MP4
-    # ------------------------------------------------------------------
-    $playlistPath = Join-Path $recordingDir "playlist.m3u8"
-    $finalMp4     = Join-Path $recordingDir "recording.mp4"
-
-    if (Test-Path $playlistPath) {
-        Write-Log "Concatenating HLS segments to MP4..."
-        try {
-            $concatArgs = @(
-                "-y",
-                "-i", $playlistPath,
-                "-c", "copy",
-                $finalMp4
-            )
-            $concatProcess = Start-Process -FilePath $ffmpegPath `
-                -ArgumentList $concatArgs `
-                -Wait -NoNewWindow -PassThru `
-                -RedirectStandardError (Join-Path $recordingDir "ffmpeg_concat.log")
-
-            if (Test-Path $finalMp4) {
-                $fileSize = (Get-Item $finalMp4).Length
-                Write-Log "Recording saved: $finalMp4 ($([math]::Round($fileSize / 1MB, 2)) MB)"
-                # Clean up HLS segments
-                Remove-Item (Join-Path $recordingDir "segment_*.ts") -Force -ErrorAction SilentlyContinue
-                Remove-Item $playlistPath -Force -ErrorAction SilentlyContinue
-            } else {
-                Write-Log "WARNING: MP4 concatenation produced no output file"
-            }
-        } catch {
-            Write-Log "WARNING: MP4 concatenation failed: $_"
-        }
-    } else {
-        Write-Log "No HLS playlist found — skipping concatenation"
-    }
-
-    # ------------------------------------------------------------------
-    # Notify agent: session completed (unless we already reported failure)
-    # ------------------------------------------------------------------
-    if (-not $sessionFailed) {
-        $completedBody = @{ status = "completed" }
-        if ($finalMp4 -and (Test-Path $finalMp4)) {
-            $completedBody.recording_path = $finalMp4
-        }
-        Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID -Body $completedBody
-    }
-
-    Write-Log "Session ended"
+    # Logoff immediately — user never sees the gateway desktop.
+    # MP4 concatenation from HLS segments is deferred to the Go agent.
+    logoff.exe
 
 } catch {
     # ------------------------------------------------------------------
@@ -1408,6 +1366,29 @@ exit 0
 
     $launchScriptContent | Out-File -Encoding UTF8 $launchScriptPath -Force
     Write-Host "  Deployed session-launch.ps1 ($($launchScriptContent.Length) bytes)" -ForegroundColor Green
+}
+
+$routerPath = "$InstallDir\scripts\session-router.ps1"
+if ($PSCmdlet.ShouldProcess($routerPath, "Deploy session router script")) {
+    $routerContent = @'
+# session-router.ps1 — Gateway logon dispatcher
+# Launched via HKLM Run key for every interactive logon.
+# For pool users with active session: runs session-launch.ps1 then logoff.
+# For admin users: exits silently so they get a normal desktop.
+
+$launcherPath = "C:\Gateway\scripts\launch-$($env:USERNAME).ps1"
+
+if (Test-Path $launcherPath) {
+    try {
+        & powershell.exe -ExecutionPolicy Bypass -File $launcherPath
+    } catch { }
+    logoff.exe
+} else {
+    exit 0
+}
+'@
+    $routerContent | Out-File -Encoding UTF8 $routerPath -Force
+    Write-Host "  Deployed session-router.ps1" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------
