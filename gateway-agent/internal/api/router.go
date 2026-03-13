@@ -50,6 +50,9 @@ func NewRouter(mgr *session.Manager, credStore *credentials.Store, cfg *config.C
 	r.Get("/api/v1/recordings", s.handleListRecordings)
 	r.Get("/api/v1/targets", s.handleListTargets)
 
+	// --- Dashboard ---
+	r.Get("/", s.handleDashboard)
+
 	// --- Health ---
 	r.Get("/health", s.handleHealth)
 

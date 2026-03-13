@@ -539,6 +539,39 @@ if ($PSCmdlet.ShouldProcess("$InstallDir\config\user-pool.json", "Write user poo
 }
 
 # ------------------------------------------------------------------
+# Step 5b: Grant session users access to Gateway directories
+# ------------------------------------------------------------------
+Write-Host "[5b/10] Setting directory permissions for session users..." -ForegroundColor Yellow
+
+if ($PSCmdlet.ShouldProcess("$InstallDir", "Grant 'Remote Desktop Users' read/execute")) {
+    $acl = Get-Acl $InstallDir
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "Remote Desktop Users",
+        "ReadAndExecute",
+        "ContainerInherit,ObjectInherit",
+        "None",
+        "Allow"
+    )
+    $acl.AddAccessRule($rule)
+    Set-Acl -Path $InstallDir -AclObject $acl
+    Write-Host "  Granted Remote Desktop Users read/execute on $InstallDir" -ForegroundColor Green
+}
+
+if ($PSCmdlet.ShouldProcess("$RecordingsDir", "Grant 'Remote Desktop Users' modify")) {
+    $acl = Get-Acl $RecordingsDir
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "Remote Desktop Users",
+        "Modify",
+        "ContainerInherit,ObjectInherit",
+        "None",
+        "Allow"
+    )
+    $acl.AddAccessRule($rule)
+    Set-Acl -Path $RecordingsDir -AclObject $acl
+    Write-Host "  Granted Remote Desktop Users modify on $RecordingsDir" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------------
 # Step 6: Configure RDS Policies
 # ------------------------------------------------------------------
 Write-Host "[6/10] Configuring RDS policies..." -ForegroundColor Yellow
