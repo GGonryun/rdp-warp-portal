@@ -613,7 +613,7 @@ if ($PSCmdlet.ShouldProcess("RD Gateway", "Configure SSL binding and policies"))
     if (-not $existingCAP) {
         New-Item -Path "RDS:\GatewayServer\CAP" `
             -Name $capName `
-            -UserGroups "Remote Desktop Users" `
+            -UserGroups "BUILTIN\Remote Desktop Users" `
             -AuthMethod 1 | Out-Null
         Write-Host "  Created CAP: $capName (Remote Desktop Users, password auth)" -ForegroundColor Green
     } else {
@@ -626,7 +626,7 @@ if ($PSCmdlet.ShouldProcess("RD Gateway", "Configure SSL binding and policies"))
     if (-not $existingRAP) {
         New-Item -Path "RDS:\GatewayServer\RAP" `
             -Name $rapName `
-            -UserGroups "Remote Desktop Users" `
+            -UserGroups "BUILTIN\Remote Desktop Users" `
             -ComputerGroupType 2 | Out-Null
         Write-Host "  Created RAP: $rapName (Remote Desktop Users, any resource)" -ForegroundColor Green
     } else {
