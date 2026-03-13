@@ -83,8 +83,8 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rdpContent := fmt.Sprintf(
-		"full address:s:%s:3389\r\nusername:s:%s\r\nprompt for credentials:i:0\r\nauthentication level:i:0\r\nredirectclipboards:i:1\r\nredirectdrives:i:0\r\n",
-		hostname, sess.GatewayUser,
+		"full address:s:%s:3389\r\nusername:s:%s\r\nprompt for credentials:i:0\r\nauthentication level:i:0\r\nredirectclipboards:i:1\r\nredirectdrives:i:0\r\nalternate shell:s:%s\r\nshell working directory:s:C:\\Gateway\r\n",
+		hostname, sess.GatewayUser, sess.AlternateShell,
 	)
 
 	w.Header().Set("Content-Type", "application/x-rdp")

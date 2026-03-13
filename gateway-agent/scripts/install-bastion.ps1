@@ -576,6 +576,18 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     # Disable wallpaper in sessions to reduce recording size
     Set-ItemProperty -Path $tsRegPath -Name "fNoRemoteDesktopWallpaper" -Value 1 -Type DWord -Force
     Write-Host "  Disabled wallpaper in RDS sessions" -ForegroundColor Green
+
+    # Allow alternate shell / initial program from RDP client
+    # fInheritInitialProgram = 1 means "use the program specified by the client or user profile"
+    Set-ItemProperty -Path $tsRegPath -Name "fInheritInitialProgram" -Value 1 -Type DWord -Force
+    Write-Host "  Enabled initial program inheritance (alternate shell)" -ForegroundColor Green
+}
+
+# Enable "Always use client-provided startup program" on the RDP-Tcp listener
+if ($PSCmdlet.ShouldProcess("RDP-Tcp WinStation", "Allow alternate shell")) {
+    $rdpTcpPath = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+    Set-ItemProperty -Path $rdpTcpPath -Name "fInheritInitialProgram" -Value 1 -Type DWord -Force
+    Write-Host "  RDP-Tcp: allow client alternate shell" -ForegroundColor Green
 }
 
 # ------------------------------------------------------------------

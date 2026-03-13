@@ -52,27 +52,30 @@ func PrepareSession(sess *Session, cfg *config.Config, target *credentials.Targe
 		return fmt.Errorf("set initial program: %w", err)
 	}
 
+	sess.AlternateShell = script
 	sess.Status = StatusReady
 	return nil
 }
 
-// setUserInitialProgram configures the RDS alternate shell for a specific user
-// via the Terminal Services registry key so that the given program launches
-// automatically when the user connects.
+// setUserInitialProgram configures the RDS initial program for a specific
+// local user via the WMI Win32_TSEnvironmentSetting class. This ensures
+// the given program launches instead of the desktop when the user connects.
 func setUserInitialProgram(username, program string) error {
+	// Use ADSI to set the TerminalServicesInitialProgram property on the
+	// local user account. This is the standard per-user mechanism that
+	// Windows RDS actually reads.
 	psCommand := fmt.Sprintf(
-		`$tsPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList'; `+
-			`$userPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSUserOverrides\$('%s')"; `+
-			`if (-not (Test-Path $userPath)) { New-Item -Path $userPath -Force | Out-Null }; `+
-			`Set-ItemProperty -Path $userPath -Name 'InitialProgram' -Value '%s' -Force; `+
-			`Set-ItemProperty -Path $userPath -Name 'fInheritInitialProgram' -Value 1 -Type DWord -Force`,
+		`$user = [ADSI]"WinNT://localhost/%s,user"; `+
+			`$user.PSBase.InvokeSet("TerminalServicesInitialProgram", "%s"); `+
+			`$user.PSBase.InvokeSet("TerminalServicesWorkDirectory", "C:\Gateway"); `+
+			`$user.SetInfo()`,
 		username, program,
 	)
 
 	cmd := exec.Command("powershell", "-Command", psCommand)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("powershell set initial program: %w: %s", err, string(output))
+		return fmt.Errorf("set initial program via ADSI: %w: %s", err, string(output))
 	}
 	return nil
 }
