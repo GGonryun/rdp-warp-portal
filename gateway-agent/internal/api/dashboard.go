@@ -19,309 +19,792 @@ const dashboardHTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RDP Bastion Gateway</title>
+<title>p0rtal Gateway</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <style>
+  :root {
+    --bg-0: #0b1120; --bg-1: #111827; --bg-2: #1e293b; --bg-3: #334155;
+    --text-0: #f8fafc; --text-1: #e2e8f0; --text-2: #94a3b8; --text-3: #64748b;
+    --blue: #3b82f6; --blue-dim: #1e3a5f; --green: #22c55e; --green-dim: #14532d;
+    --red: #ef4444; --red-dim: #7f1d1d; --yellow: #eab308; --orange: #f97316;
+    --purple: #8b5cf6; --cyan: #06b6d4;
+    --radius: 8px; --radius-sm: 4px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #0f172a; color: #e2e8f0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 1.5rem; max-width: 1100px; margin: 0 auto;
+    background: var(--bg-0); color: var(--text-1);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-size: 14px; line-height: 1.5;
   }
-  h1 { font-size: 1.4rem; margin-bottom: 1.5rem; color: #f8fafc; }
-  h2 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #94a3b8; font-weight: 500; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
 
-  /* Status badges */
-  .badge {
-    display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px;
-    font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+  /* Layout */
+  .shell { max-width: 1280px; margin: 0 auto; padding: 1.25rem; }
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem;
   }
-  .badge-pending      { background: #eab308; color: #000; }
-  .badge-ready        { background: #3b82f6; color: #fff; }
-  .badge-active       { background: #22c55e; color: #000; }
-  .badge-launching    { background: #8b5cf6; color: #fff; }
-  .badge-disconnected { background: #f97316; color: #000; }
-  .badge-completed    { background: #6b7280; color: #fff; }
-  .badge-terminated   { background: #ef4444; color: #fff; }
-  .badge-failed       { background: #dc2626; color: #fff; }
+  .header h1 { font-size: 1.3rem; color: var(--text-0); font-weight: 700; letter-spacing: -0.02em; }
+  .header h1 span { color: var(--blue); }
+
+  /* Health bar */
+  .health {
+    display: flex; gap: 1.25rem; font-size: 0.8rem; color: var(--text-2);
+    flex-wrap: wrap; align-items: center;
+  }
+  .health-item { display: flex; align-items: center; gap: 0.3rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot-ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot-err { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+  /* Tabs */
+  .tabs {
+    display: flex; gap: 0; border-bottom: 1px solid var(--bg-3); margin-bottom: 1.25rem;
+  }
+  .tab {
+    padding: 0.6rem 1.25rem; cursor: pointer; font-weight: 600; font-size: 0.85rem;
+    color: var(--text-3); border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s; user-select: none;
+  }
+  .tab:hover { color: var(--text-1); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
 
   /* Cards */
   .card {
-    background: #1e293b; border-radius: 8px; padding: 1.25rem;
-    margin-bottom: 1.25rem; border: 1px solid #334155;
+    background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: var(--radius);
+    padding: 1.25rem; margin-bottom: 1.25rem;
+  }
+  .card-title {
+    font-size: 0.95rem; font-weight: 600; color: var(--text-0); margin-bottom: 0.75rem;
+    display: flex; align-items: center; justify-content: space-between;
   }
 
-  /* Table */
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th { text-align: left; color: #94a3b8; font-weight: 500; padding: 0.5rem 0.75rem; border-bottom: 1px solid #334155; }
-  td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1e293b; }
-  tr:hover td { background: #1e293b; }
-
-  /* Form */
+  /* Forms */
   .form-row { display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
-  .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
-  .form-group label { font-size: 0.8rem; color: #94a3b8; }
-  select, input[type="text"], input[type="number"] {
-    background: #0f172a; border: 1px solid #475569; border-radius: 4px;
-    color: #e2e8f0; padding: 0.5rem 0.75rem; font-size: 0.85rem; min-width: 180px;
+  .form-group { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 160px; }
+  .form-group label { font-size: 0.75rem; color: var(--text-2); font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+  .form-group.narrow { flex: 0 0 100px; min-width: 80px; }
+  input, select {
+    background: var(--bg-0); border: 1px solid var(--bg-3); border-radius: var(--radius-sm);
+    color: var(--text-1); padding: 0.5rem 0.75rem; font-size: 0.85rem;
+    transition: border-color 0.15s; width: 100%;
   }
-  select:focus, input:focus { outline: none; border-color: #3b82f6; }
+  input:focus, select:focus { outline: none; border-color: var(--blue); }
 
   /* Buttons */
   .btn {
-    padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer;
-    font-size: 0.85rem; font-weight: 600; transition: opacity 0.15s; text-decoration: none;
-    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.45rem 0.9rem; border: none; border-radius: var(--radius-sm); cursor: pointer;
+    font-size: 0.8rem; font-weight: 600; transition: all 0.15s; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap;
+    line-height: 1.4;
   }
-  .btn:hover { opacity: 0.85; }
-  .btn-primary { background: #3b82f6; color: #fff; }
-  .btn-green   { background: #22c55e; color: #000; }
-  .btn-red     { background: #ef4444; color: #fff; }
-  .btn-sm      { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+  .btn:hover { filter: brightness(1.15); text-decoration: none; }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-green  { background: var(--green); color: #000; }
+  .btn-red    { background: var(--red); color: #fff; }
+  .btn-ghost  { background: var(--bg-3); color: var(--text-1); }
+  .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+  .btn-icon { padding: 0.3rem 0.45rem; font-size: 0.85rem; line-height: 1; }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .btn-group { display: flex; gap: 0.35rem; flex-wrap: wrap; }
 
-  /* Links */
-  a { color: #60a5fa; text-decoration: none; }
-  a:hover { text-decoration: underline; }
+  /* Table */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th {
+    text-align: left; color: var(--text-2); font-weight: 500; padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--bg-3); font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: 0.04em; white-space: nowrap;
+  }
+  td { padding: 0.55rem 0.75rem; border-bottom: 1px solid rgba(51,65,85,0.4); vertical-align: middle; }
+  tr:hover td { background: rgba(30,41,59,0.5); }
+  .session-id { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.78rem; cursor: pointer; }
+  .session-id:hover { color: var(--cyan); }
+  .empty { color: var(--text-3); text-align: center; padding: 2.5rem 1rem; }
+
+  /* Badges */
+  .badge {
+    display: inline-block; padding: 0.12rem 0.5rem; border-radius: 3px;
+    font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .badge-pending      { background: rgba(234,179,8,0.15); color: var(--yellow); }
+  .badge-ready        { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .badge-active       { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge-launching    { background: rgba(139,92,246,0.15); color: var(--purple); }
+  .badge-disconnected { background: rgba(249,115,22,0.15); color: var(--orange); }
+  .badge-completed    { background: rgba(107,114,128,0.15); color: #9ca3af; }
+  .badge-terminated   { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge-failed       { background: rgba(220,38,38,0.2); color: #fca5a5; }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .modal-backdrop.open { opacity: 1; pointer-events: auto; }
+  .modal {
+    background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: var(--radius);
+    width: 95%; max-height: 90vh; overflow-y: auto; position: relative;
+    transform: translateY(20px); transition: transform 0.2s;
+  }
+  .modal-backdrop.open .modal { transform: translateY(0); }
+  .modal-sm { max-width: 560px; }
+  .modal-lg { max-width: 960px; }
+  .modal-xl { max-width: 1100px; }
+  .modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--bg-3);
+  }
+  .modal-head h3 { font-size: 1rem; color: var(--text-0); }
+  .modal-body { padding: 1.25rem; }
+  .modal-close {
+    background: none; border: none; color: var(--text-3); font-size: 1.4rem;
+    cursor: pointer; padding: 0.25rem; line-height: 1;
+  }
+  .modal-close:hover { color: var(--text-0); }
+
+  /* Detail grid */
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 2rem; margin-bottom: 1rem; }
+  .detail-item label { display: block; font-size: 0.7rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.1rem; }
+  .detail-item .val { font-size: 0.88rem; color: var(--text-0); word-break: break-all; }
+  .detail-item .val.mono { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.82rem; }
+  .copy-wrap { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .copy-btn {
+    background: none; border: 1px solid var(--bg-3); color: var(--text-3); border-radius: 3px;
+    padding: 0.1rem 0.35rem; font-size: 0.7rem; cursor: pointer; transition: all 0.15s;
+  }
+  .copy-btn:hover { border-color: var(--blue); color: var(--blue); }
+  .secret-toggle {
+    background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 0.75rem;
+    padding: 0.1rem 0.3rem;
+  }
+  .secret-toggle:hover { color: var(--text-1); }
+
+  /* Video player in modal */
+  .player-wrap { background: #000; border-radius: var(--radius); overflow: hidden; margin-bottom: 1rem; position: relative; }
+  .player-wrap video { width: 100%; display: block; max-height: 65vh; }
+
+  /* Recording card */
+  .rec-card {
+    background: var(--bg-2); border-radius: var(--radius); padding: 1rem;
+    margin-bottom: 0.75rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+  }
+  .rec-info { flex: 1; min-width: 200px; }
+  .rec-info .rec-title { font-weight: 600; color: var(--text-0); font-size: 0.88rem; margin-bottom: 0.25rem; }
+  .rec-info .rec-meta { font-size: 0.78rem; color: var(--text-2); }
 
   /* Toast */
-  #toast {
-    position: fixed; bottom: 1.5rem; right: 1.5rem; padding: 0.75rem 1.25rem;
-    border-radius: 6px; font-size: 0.85rem; font-weight: 500;
-    display: none; z-index: 100; max-width: 400px;
+  .toast-container { position: fixed; bottom: 1.25rem; right: 1.25rem; z-index: 2000; display: flex; flex-direction: column-reverse; gap: 0.5rem; }
+  .toast {
+    padding: 0.65rem 1rem; border-radius: var(--radius-sm); font-size: 0.82rem; font-weight: 500;
+    animation: slideIn 0.2s ease-out; max-width: 400px; display: flex; align-items: center; gap: 0.5rem;
   }
-  .toast-success { background: #166534; color: #bbf7d0; }
-  .toast-error   { background: #7f1d1d; color: #fecaca; }
+  .toast-success { background: var(--green-dim); color: #bbf7d0; border: 1px solid rgba(34,197,94,0.3); }
+  .toast-error   { background: var(--red-dim); color: #fecaca; border: 1px solid rgba(239,68,68,0.3); }
+  @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 
-  /* Health bar */
-  .health-bar {
-    display: flex; gap: 1.5rem; font-size: 0.8rem; color: #94a3b8;
-    margin-bottom: 1.25rem; flex-wrap: wrap;
+  /* Filter bar */
+  .filter-bar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .filter-bar select, .filter-bar input { min-width: auto; width: auto; font-size: 0.8rem; padding: 0.35rem 0.6rem; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .detail-grid { grid-template-columns: 1fr; }
+    .form-group { min-width: 100%; }
+    .header { flex-direction: column; align-items: flex-start; }
   }
-  .health-bar span { display: flex; align-items: center; gap: 0.35rem; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot-green  { background: #22c55e; }
-  .dot-yellow { background: #eab308; }
-  .dot-red    { background: #ef4444; }
 
-  .empty-state { color: #64748b; text-align: center; padding: 2rem; }
+  /* Separator */
+  .sep { border: 0; border-top: 1px solid var(--bg-3); margin: 1rem 0; }
 </style>
 </head>
 <body>
+<div class="shell">
 
-<h1>RDP Bastion Gateway</h1>
+  <!-- Header -->
+  <div class="header">
+    <h1><span>p0rtal</span> Gateway</h1>
+    <div class="health" id="health">
+      <div class="health-item"><span class="dot dot-ok" id="h-dot"></span> <span id="h-status">connecting...</span></div>
+      <div class="health-item">Active: <strong id="h-active">-</strong></div>
+      <div class="health-item">Available: <strong id="h-avail">-</strong></div>
+      <div class="health-item">Uptime: <strong id="h-uptime">-</strong></div>
+      <div class="health-item">Disk: <strong id="h-disk">-</strong></div>
+    </div>
+  </div>
 
-<div class="health-bar" id="health-bar">
-  <span><span class="dot dot-green" id="health-dot"></span> <span id="health-status">loading...</span></span>
-  <span>Active: <strong id="h-active">-</strong></span>
-  <span>Available users: <strong id="h-avail">-</strong></span>
-  <span>Uptime: <strong id="h-uptime">-</strong></span>
-  <span>Disk free: <strong id="h-disk">-</strong></span>
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="sessions">Sessions</div>
+    <div class="tab" data-tab="recordings">Recordings</div>
+  </div>
+
+  <!-- ============ SESSIONS TAB ============ -->
+  <div class="tab-panel active" id="panel-sessions">
+
+    <!-- Create Session -->
+    <div class="card">
+      <div class="card-title">New Session</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Target</label>
+          <select id="f-target"><option value="">Loading...</option></select>
+        </div>
+        <div class="form-group">
+          <label>Requested By</label>
+          <input type="text" id="f-requester" placeholder="your name">
+        </div>
+        <div class="form-group narrow">
+          <label>Timeout</label>
+          <input type="number" id="f-timeout" value="60" min="5" max="480">
+        </div>
+        <div class="form-group narrow" style="flex:0 0 auto; min-width: auto;">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" id="btn-create" onclick="createSession()">Create</button>
+        </div>
+      </div>
+      <div id="create-result" style="margin-top:0.75rem; display:none;"></div>
+    </div>
+
+    <!-- Sessions List -->
+    <div class="card">
+      <div class="card-title">
+        <span>Sessions</span>
+        <div class="filter-bar">
+          <select id="f-status" onchange="loadSessions()">
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="ready">Ready</option>
+            <option value="active">Active</option>
+            <option value="disconnected">Disconnected</option>
+            <option value="completed">Completed</option>
+            <option value="terminated">Terminated</option>
+            <option value="failed">Failed</option>
+          </select>
+          <button class="btn btn-sm btn-ghost" onclick="loadSessions()">Refresh</button>
+        </div>
+      </div>
+      <div class="table-wrap" id="sessions-container">
+        <div class="empty">Loading sessions...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RECORDINGS TAB ============ -->
+  <div class="tab-panel" id="panel-recordings">
+    <div class="card">
+      <div class="card-title">
+        <span>Recordings</span>
+        <div class="filter-bar">
+          <input type="date" id="f-rec-date">
+          <button class="btn btn-sm btn-ghost" onclick="loadRecordings()">Filter</button>
+          <button class="btn btn-sm btn-ghost" onclick="clearRecDate()">Clear</button>
+        </div>
+      </div>
+      <div id="recordings-container">
+        <div class="empty">Loading recordings...</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- .shell -->
+
+<!-- ============ SESSION DETAIL MODAL ============ -->
+<div class="modal-backdrop" id="modal-detail">
+  <div class="modal modal-sm">
+    <div class="modal-head">
+      <h3>Session Details</h3>
+      <button class="modal-close" onclick="closeModal('modal-detail')">&times;</button>
+    </div>
+    <div class="modal-body" id="detail-body"></div>
+  </div>
 </div>
 
-<!-- Create Session -->
-<div class="card">
-  <h2>New Session</h2>
-  <div class="form-row">
-    <div class="form-group">
-      <label>Target</label>
-      <select id="target-select"><option value="">Loading targets...</option></select>
+<!-- ============ MONITOR MODAL ============ -->
+<div class="modal-backdrop" id="modal-monitor">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="monitor-title">Live Monitor</h3>
+      <button class="modal-close" onclick="closeMonitor()">&times;</button>
     </div>
-    <div class="form-group">
-      <label>Requested By</label>
-      <input type="text" id="requested-by" placeholder="your name" value="">
+    <div class="modal-body">
+      <div id="monitor-info" style="font-size:0.8rem; color:var(--text-2); margin-bottom:0.75rem;"></div>
+      <div class="player-wrap">
+        <video id="monitor-video" controls autoplay muted></video>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary btn-sm" onclick="monitorJumpLive()">Jump to Live</button>
+        <button class="btn btn-red btn-sm" id="btn-mon-terminate" onclick="monitorTerminate()">Terminate</button>
+      </div>
     </div>
-    <div class="form-group">
-      <label>Timeout (min)</label>
-      <input type="number" id="timeout-min" value="60" min="5" max="480" style="min-width:80px;">
-    </div>
-    <button class="btn btn-primary" id="btn-create" onclick="createSession()">Create Session</button>
-  </div>
-  <div id="create-result" style="margin-top:0.75rem; font-size:0.85rem; display:none;"></div>
-</div>
-
-<!-- Sessions Table -->
-<div class="card">
-  <h2>Sessions</h2>
-  <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap;">
-    <button class="btn btn-sm btn-primary" onclick="loadSessions()">Refresh</button>
-    <select id="filter-status" onchange="loadSessions()" style="min-width:120px; font-size:0.8rem; padding:0.3rem;">
-      <option value="">All statuses</option>
-      <option value="pending">Pending</option>
-      <option value="ready">Ready</option>
-      <option value="active">Active</option>
-      <option value="disconnected">Disconnected</option>
-      <option value="completed">Completed</option>
-      <option value="terminated">Terminated</option>
-      <option value="failed">Failed</option>
-    </select>
-  </div>
-  <div id="sessions-container">
-    <div class="empty-state">Loading sessions...</div>
   </div>
 </div>
 
-<div id="toast"></div>
+<!-- ============ RECORDING PLAYER MODAL ============ -->
+<div class="modal-backdrop" id="modal-player">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="player-title">Recording</h3>
+      <button class="modal-close" onclick="closePlayer()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="player-wrap">
+        <video id="player-video" controls style="max-height:70vh;"></video>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toasts"></div>
 
 <script>
 var API = "/api/v1";
+var hlsInstance = null;
+var monitorSessionId = null;
+var monitorPollTimer = null;
 
-// ---- Health ----
+// ===================== TABS =====================
+document.querySelectorAll(".tab").forEach(function(tab) {
+  tab.addEventListener("click", function() {
+    document.querySelectorAll(".tab").forEach(function(t) { t.classList.remove("active"); });
+    document.querySelectorAll(".tab-panel").forEach(function(p) { p.classList.remove("active"); });
+    tab.classList.add("active");
+    document.getElementById("panel-" + tab.dataset.tab).classList.add("active");
+    if (tab.dataset.tab === "recordings") loadRecordings();
+  });
+});
+
+// ===================== MODALS =====================
+function openModal(id) { document.getElementById(id).classList.add("open"); }
+function closeModal(id) { document.getElementById(id).classList.remove("open"); }
+
+// Close on backdrop click
+document.querySelectorAll(".modal-backdrop").forEach(function(bd) {
+  bd.addEventListener("click", function(e) {
+    if (e.target === bd) {
+      bd.classList.remove("open");
+      if (bd.id === "modal-monitor") destroyMonitorHLS();
+      if (bd.id === "modal-player") stopPlayer();
+    }
+  });
+});
+
+// Close on Escape
+document.addEventListener("keydown", function(e) {
+  if (e.key === "Escape") {
+    document.querySelectorAll(".modal-backdrop.open").forEach(function(bd) {
+      bd.classList.remove("open");
+    });
+    destroyMonitorHLS();
+    stopPlayer();
+  }
+});
+
+// ===================== HEALTH =====================
 function loadHealth() {
-  fetch("/health")
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      var dot = document.getElementById("health-dot");
-      document.getElementById("health-status").textContent = d.status;
-      dot.className = "dot " + (d.status === "ok" ? "dot-green" : "dot-red");
-      document.getElementById("h-active").textContent = d.active_sessions;
-      document.getElementById("h-avail").textContent = d.available_users;
-      var mins = Math.floor(d.uptime_seconds / 60);
-      var hrs = Math.floor(mins / 60);
-      document.getElementById("h-uptime").textContent = hrs > 0 ? hrs + "h " + (mins % 60) + "m" : mins + "m";
-      document.getElementById("h-disk").textContent = d.recordings_dir_free_gb.toFixed(1) + " GB";
-    })
-    .catch(function() {
-      document.getElementById("health-status").textContent = "unreachable";
-      document.getElementById("health-dot").className = "dot dot-red";
-    });
+  fetch("/health").then(function(r) { return r.json(); }).then(function(d) {
+    var dot = document.getElementById("h-dot");
+    dot.className = "dot " + (d.status === "ok" ? "dot-ok" : "dot-err");
+    document.getElementById("h-status").textContent = d.status;
+    document.getElementById("h-active").textContent = d.active_sessions;
+    document.getElementById("h-avail").textContent = d.available_users;
+    var m = Math.floor(d.uptime_seconds / 60);
+    var h = Math.floor(m / 60);
+    document.getElementById("h-uptime").textContent = h > 0 ? h + "h " + (m % 60) + "m" : m + "m";
+    document.getElementById("h-disk").textContent = d.recordings_dir_free_gb.toFixed(1) + " GB";
+  }).catch(function() {
+    document.getElementById("h-dot").className = "dot dot-err";
+    document.getElementById("h-status").textContent = "unreachable";
+  });
 }
 
-// ---- Targets ----
+// ===================== TARGETS =====================
 function loadTargets() {
-  fetch(API + "/targets")
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      var sel = document.getElementById("target-select");
-      sel.innerHTML = "";
-      if (!d.targets || d.targets.length === 0) {
-        sel.innerHTML = '<option value="">No targets configured</option>';
-        return;
-      }
-      d.targets.forEach(function(t) {
-        var opt = document.createElement("option");
-        opt.value = t.id;
-        opt.textContent = t.name + " (" + t.host + ")";
-        sel.appendChild(opt);
-      });
+  fetch(API + "/targets").then(function(r) { return r.json(); }).then(function(d) {
+    var sel = document.getElementById("f-target");
+    sel.innerHTML = "";
+    if (!d.targets || d.targets.length === 0) {
+      sel.innerHTML = "<option value=''>No targets</option>";
+      return;
+    }
+    d.targets.forEach(function(t) {
+      var o = document.createElement("option");
+      o.value = t.id;
+      o.textContent = t.name + " (" + t.host + ")";
+      sel.appendChild(o);
     });
+  });
 }
 
-// ---- Sessions ----
+// ===================== SESSIONS =====================
 function loadSessions() {
-  var status = document.getElementById("filter-status").value;
-  var url = API + "/sessions";
-  if (status) url += "?status=" + status;
-  fetch(url)
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      var container = document.getElementById("sessions-container");
-      if (!d.sessions || d.sessions.length === 0) {
-        container.innerHTML = '<div class="empty-state">No sessions found</div>';
-        return;
+  var status = document.getElementById("f-status").value;
+  var url = API + "/sessions" + (status ? "?status=" + status : "");
+  fetch(url).then(function(r) { return r.json(); }).then(function(d) {
+    var c = document.getElementById("sessions-container");
+    if (!d.sessions || d.sessions.length === 0) {
+      c.innerHTML = "<div class='empty'>No sessions found</div>";
+      return;
+    }
+    d.sessions.sort(function(a, b) { return new Date(b.started_at) - new Date(a.started_at); });
+
+    var html = "<table><thead><tr>"
+      + "<th>Session</th><th>Status</th><th>Target</th><th>Requested By</th>"
+      + "<th>Started</th><th>Expires</th><th>Actions</th></tr></thead><tbody>";
+
+    d.sessions.forEach(function(s) {
+      var alive = ["pending","ready","active","disconnected","launching"].indexOf(s.status) >= 0;
+      var started = fmtTime(s.started_at);
+      var expires = fmtTime(s.expires_at);
+      var shortId = s.session_id.length > 12 ? s.session_id.substring(0, 12) + "..." : s.session_id;
+
+      var acts = "";
+      if (alive) {
+        acts += "<button class='btn btn-sm btn-green' onclick=\"dlLauncher('" + s.session_id + "')\" title='Download .bat launcher'>Connect</button>";
+        acts += "<button class='btn btn-sm btn-ghost' onclick=\"dlRDP('" + s.session_id + "')\" title='Download RDP file'>RDP</button>";
+        acts += "<button class='btn btn-sm btn-primary' onclick=\"openMonitorModal('" + s.session_id + "')\" title='Live monitor'>Monitor</button>";
+        acts += "<button class='btn btn-sm btn-red btn-icon' onclick=\"killSession('" + s.session_id + "')\" title='Terminate'>&times;</button>";
+      } else if (s.status === "completed") {
+        acts += "<button class='btn btn-sm btn-primary' onclick=\"playRecording('" + s.session_id + "', '" + esc(s.target_name || s.target_id) + "')\" title='Play recording'>Play</button>";
+        acts += "<a class='btn btn-sm btn-ghost' href='" + API + "/sessions/" + s.session_id + "/recording' title='Download recording'>Download</a>";
       }
-      // Sort newest first
-      d.sessions.sort(function(a, b) { return new Date(b.started_at) - new Date(a.started_at); });
-      var html = '<table><thead><tr><th>ID</th><th>Status</th><th>Target</th><th>Requested By</th><th>Started</th><th>Expires</th><th>Actions</th></tr></thead><tbody>';
-      d.sessions.forEach(function(s) {
-        var started = new Date(s.started_at).toLocaleString();
-        var expires = new Date(s.expires_at).toLocaleString();
-        var isAlive = ["pending","ready","active","disconnected","launching"].indexOf(s.status) >= 0;
-        var actions = '';
-        if (isAlive) {
-          actions += '<a class="btn btn-sm btn-green" href="' + API + '/sessions/' + s.session_id + '/launcher" title="Download .bat launcher (auto-login)">Connect</a> ';
-          actions += '<a class="btn btn-sm" style="background:#475569;color:#e2e8f0;" href="' + API + '/sessions/' + s.session_id + '/rdp-file" title="Download RDP file (manual password)">RDP</a> ';
-          actions += '<a class="btn btn-sm btn-primary" href="' + API + '/sessions/' + s.session_id + '/monitor" title="Monitor session">Monitor</a> ';
-          actions += '<button class="btn btn-sm btn-red" onclick="terminateSession(\'' + s.session_id + '\')">Kill</button>';
-        } else {
-          actions += '<a class="btn btn-sm btn-primary" href="' + API + '/sessions/' + s.session_id + '/recording" title="Download recording">Recording</a>';
-        }
-        html += '<tr>';
-        html += '<td><a href="' + API + '/sessions/' + s.session_id + '" target="_blank">' + s.session_id + '</a></td>';
-        html += '<td><span class="badge badge-' + s.status + '">' + s.status + '</span></td>';
-        html += '<td>' + (s.target_name || s.target_id) + '</td>';
-        html += '<td>' + (s.requested_by || '-') + '</td>';
-        html += '<td>' + started + '</td>';
-        html += '<td>' + expires + '</td>';
-        html += '<td>' + actions + '</td>';
-        html += '</tr>';
-      });
-      html += '</tbody></table>';
-      container.innerHTML = html;
-    })
-    .catch(function(err) {
-      document.getElementById("sessions-container").innerHTML = '<div class="empty-state">Failed to load sessions</div>';
+
+      html += "<tr>"
+        + "<td><span class='session-id' onclick=\"showDetail('" + s.session_id + "')\" title='" + s.session_id + "'>" + shortId + "</span></td>"
+        + "<td><span class='badge badge-" + s.status + "'>" + s.status + "</span></td>"
+        + "<td>" + (s.target_name || s.target_id || "-") + "</td>"
+        + "<td>" + (s.requested_by || "-") + "</td>"
+        + "<td>" + started + "</td>"
+        + "<td>" + expires + "</td>"
+        + "<td><div class='btn-group'>" + acts + "</div></td>"
+        + "</tr>";
     });
+
+    html += "</tbody></table>";
+    c.innerHTML = html;
+  }).catch(function() {
+    document.getElementById("sessions-container").innerHTML = "<div class='empty'>Failed to load sessions</div>";
+  });
 }
 
-// ---- Create Session ----
+// ===================== CREATE SESSION =====================
 function createSession() {
-  var targetId = document.getElementById("target-select").value;
-  var requestedBy = document.getElementById("requested-by").value.trim();
-  var timeout = parseInt(document.getElementById("timeout-min").value) || 60;
+  var targetId = document.getElementById("f-target").value;
+  var requester = document.getElementById("f-requester").value.trim();
+  var timeout = parseInt(document.getElementById("f-timeout").value) || 60;
 
   if (!targetId) { toast("Select a target", "error"); return; }
-  if (!requestedBy) { toast("Enter your name", "error"); return; }
+  if (!requester) { toast("Enter your name", "error"); return; }
 
   var btn = document.getElementById("btn-create");
-  btn.disabled = true;
-  btn.textContent = "Creating...";
+  btn.disabled = true; btn.textContent = "Creating...";
 
   fetch(API + "/sessions", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({target_id: targetId, requested_by: requestedBy, timeout_minutes: timeout})
+    body: JSON.stringify({target_id: targetId, requested_by: requester, timeout_minutes: timeout})
   })
   .then(function(r) {
     if (!r.ok) return r.json().then(function(e) { throw new Error(e.error || "request failed"); });
     return r.json();
   })
   .then(function(d) {
-    var result = document.getElementById("create-result");
-    result.style.display = "block";
-    result.innerHTML = 'Session <strong>' + d.session_id + '</strong> created. '
-      + '<a class="btn btn-sm btn-green" href="' + API + '/sessions/' + d.session_id + '/launcher">Download Launcher (.bat)</a> '
-      + '<a class="btn btn-sm" style="background:#475569;color:#e2e8f0;" href="' + API + '/sessions/' + d.session_id + '/rdp-file">RDP File</a> '
-      + '<a class="btn btn-sm btn-primary" href="' + API + '/sessions/' + d.session_id + '/monitor">Monitor</a>'
-      + '<br><span style="color:#94a3b8; font-size:0.8rem;">User: ' + d.gateway_user + ' | Pass: ' + d.gateway_pass + '</span>';
-    toast("Session " + d.session_id + " created", "success");
+    var res = document.getElementById("create-result");
+    res.style.display = "block";
+    res.innerHTML = "<div style='background:var(--bg-2);border-radius:var(--radius-sm);padding:0.75rem;'>"
+      + "<div style='margin-bottom:0.5rem;font-weight:600;color:var(--text-0);'>Session created: <span class='session-id' onclick=\"showDetail('" + d.session_id + "')\">" + d.session_id + "</span></div>"
+      + "<div class='btn-group'>"
+      + "<button class='btn btn-sm btn-green' onclick=\"dlLauncher('" + d.session_id + "')\">Download Launcher</button>"
+      + "<button class='btn btn-sm btn-ghost' onclick=\"dlRDP('" + d.session_id + "')\">RDP File</button>"
+      + "<button class='btn btn-sm btn-primary' onclick=\"openMonitorModal('" + d.session_id + "')\">Monitor</button>"
+      + "<button class='btn btn-sm btn-ghost' onclick=\"showDetail('" + d.session_id + "')\">Details</button>"
+      + "</div>"
+      + "<div style='margin-top:0.5rem;font-size:0.78rem;color:var(--text-2);'>"
+      + "User: <code>" + esc(d.gateway_user) + "</code> &middot; Pass: <code>" + esc(d.gateway_pass) + "</code>"
+      + "</div></div>";
+    toast("Session " + d.session_id.substring(0, 12) + " created", "success");
     loadSessions();
     loadHealth();
   })
-  .catch(function(err) {
-    toast("Failed: " + err.message, "error");
-  })
-  .finally(function() {
-    btn.disabled = false;
-    btn.textContent = "Create Session";
+  .catch(function(err) { toast("Failed: " + err.message, "error"); })
+  .finally(function() { btn.disabled = false; btn.textContent = "Create"; });
+}
+
+// ===================== SESSION DETAIL =====================
+function showDetail(id) {
+  fetch(API + "/sessions/" + id).then(function(r) {
+    if (!r.ok) throw new Error("not found");
+    return r.json();
+  }).then(function(d) {
+    var alive = ["pending","ready","active","disconnected","launching"].indexOf(d.status) >= 0;
+    var passHidden = true;
+
+    var html = "<div class='detail-grid'>"
+      + detailItem("Session ID", "<span class='mono'>" + d.id + "</span>" + copyBtn(d.id))
+      + detailItem("Status", "<span class='badge badge-" + d.status + "'>" + d.status + "</span>")
+      + detailItem("Target", (d.target_name || d.target_id) + " (" + (d.target_host || "-") + ")")
+      + detailItem("Target User", d.target_user || "-")
+      + detailItem("Requested By", d.requested_by || "-")
+      + detailItem("Gateway User", "<span class='mono'>" + esc(d.gateway_user || "-") + "</span>" + copyBtn(d.gateway_user || ""))
+      + detailItem("Recording Dir", "<span class='mono' style='font-size:0.75rem;'>" + esc(d.recording_dir || "-") + "</span>")
+      + detailItem("RDS Session ID", d.rds_session_id || "-")
+      + detailItem("Started", fmtTimeFull(d.started_at))
+      + detailItem("Connected", fmtTimeFull(d.connected_at))
+      + detailItem("Disconnected", fmtTimeFull(d.disconnected_at))
+      + detailItem("Ended", fmtTimeFull(d.ended_at))
+      + detailItem("Expires", fmtTimeFull(d.expires_at))
+      + "</div>";
+
+    if (d.metadata && Object.keys(d.metadata).length > 0) {
+      html += "<div style='margin-bottom:1rem;'><label style='font-size:0.7rem;color:var(--text-3);text-transform:uppercase;'>Metadata</label>";
+      Object.keys(d.metadata).forEach(function(k) {
+        html += "<div style='font-size:0.82rem;'><strong>" + esc(k) + ":</strong> " + esc(d.metadata[k]) + "</div>";
+      });
+      html += "</div>";
+    }
+
+    html += "<hr class='sep'><div class='btn-group'>";
+    if (alive) {
+      html += "<button class='btn btn-green' onclick=\"dlLauncher('" + d.id + "')\">Download Launcher (.bat)</button>";
+      html += "<button class='btn btn-ghost' onclick=\"dlRDP('" + d.id + "')\">Download RDP File</button>";
+      html += "<button class='btn btn-primary' onclick=\"closeModal('modal-detail');openMonitorModal('" + d.id + "')\">Monitor</button>";
+      html += "<button class='btn btn-red' onclick=\"killSession('" + d.id + "')\">Terminate</button>";
+    } else if (d.status === "completed") {
+      html += "<button class='btn btn-primary' onclick=\"closeModal('modal-detail');playRecording('" + d.id + "', '" + esc(d.target_name || d.target_id) + "')\">Play Recording</button>";
+      html += "<a class='btn btn-ghost' href='" + API + "/sessions/" + d.id + "/recording'>Download Recording</a>";
+    }
+    html += "</div>";
+
+    document.getElementById("detail-body").innerHTML = html;
+    openModal("modal-detail");
+  }).catch(function(err) {
+    toast("Failed to load session: " + err.message, "error");
   });
 }
 
-// ---- Terminate ----
-function terminateSession(id) {
-  if (!confirm("Terminate session " + id + "?")) return;
+function detailItem(label, value) {
+  return "<div class='detail-item'><label>" + label + "</label><div class='val'>" + (value || "-") + "</div></div>";
+}
+
+// ===================== MONITOR =====================
+function openMonitorModal(sessionId) {
+  monitorSessionId = sessionId;
+  document.getElementById("monitor-title").textContent = "Live Monitor — " + sessionId.substring(0, 12);
+  document.getElementById("monitor-info").textContent = "Loading...";
+  openModal("modal-monitor");
+
+  // Poll session info
+  fetchMonitorInfo();
+  monitorPollTimer = setInterval(fetchMonitorInfo, 5000);
+
+  // Start HLS
+  var video = document.getElementById("monitor-video");
+  var hlsUrl = API + "/sessions/" + sessionId + "/stream/playlist.m3u8";
+
+  if (Hls.isSupported()) {
+    hlsInstance = new Hls({
+      liveSyncDurationCount: 3,
+      liveMaxLatencyDurationCount: 6,
+      enableWorker: true
+    });
+    hlsInstance.loadSource(hlsUrl);
+    hlsInstance.attachMedia(video);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
+      video.play().catch(function(){});
+    });
+    hlsInstance.on(Hls.Events.ERROR, function(ev, data) {
+      if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        setTimeout(function() { if (hlsInstance) hlsInstance.startLoad(); }, 3000);
+      } else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        if (hlsInstance) hlsInstance.recoverMediaError();
+      }
+    });
+  } else {
+    video.src = hlsUrl;
+  }
+}
+
+function fetchMonitorInfo() {
+  if (!monitorSessionId) return;
+  fetch(API + "/sessions/" + monitorSessionId).then(function(r) { return r.json(); }).then(function(d) {
+    var parts = [];
+    parts.push("<span class='badge badge-" + d.status + "'>" + d.status + "</span>");
+    if (d.target_name) parts.push("Target: " + d.target_name + " (" + (d.target_host || "") + ")");
+    if (d.requested_by) parts.push("By: " + d.requested_by);
+    if (d.started_at) parts.push("Started: " + fmtTime(d.started_at));
+    document.getElementById("monitor-info").innerHTML = parts.join(" &middot; ");
+  }).catch(function(){});
+}
+
+function monitorJumpLive() {
+  var video = document.getElementById("monitor-video");
+  if (hlsInstance && hlsInstance.liveSyncPosition) {
+    video.currentTime = hlsInstance.liveSyncPosition;
+  } else if (video.duration && isFinite(video.duration)) {
+    video.currentTime = video.duration;
+  }
+  video.play().catch(function(){});
+}
+
+function monitorTerminate() {
+  if (!monitorSessionId) return;
+  if (!confirm("Terminate session " + monitorSessionId.substring(0, 12) + "?")) return;
+  killSessionDirect(monitorSessionId);
+}
+
+function closeMonitor() {
+  closeModal("modal-monitor");
+  destroyMonitorHLS();
+}
+
+function destroyMonitorHLS() {
+  if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+  if (monitorPollTimer) { clearInterval(monitorPollTimer); monitorPollTimer = null; }
+  monitorSessionId = null;
+  var v = document.getElementById("monitor-video");
+  v.pause(); v.removeAttribute("src"); v.load();
+}
+
+// ===================== RECORDINGS =====================
+function loadRecordings() {
+  var dateVal = document.getElementById("f-rec-date").value;
+  var url = API + "/recordings" + (dateVal ? "?date=" + dateVal : "");
+  fetch(url).then(function(r) { return r.json(); }).then(function(d) {
+    var c = document.getElementById("recordings-container");
+    if (!d.recordings || d.recordings.length === 0) {
+      c.innerHTML = "<div class='empty'>No recordings found" + (dateVal ? " for " + dateVal : "") + "</div>";
+      return;
+    }
+
+    var html = "<table><thead><tr>"
+      + "<th>Session</th><th>Target</th><th>Requested By</th>"
+      + "<th>Started</th><th>Ended</th><th>Actions</th></tr></thead><tbody>";
+
+    d.recordings.forEach(function(r) {
+      var shortId = r.session_id.length > 12 ? r.session_id.substring(0, 12) + "..." : r.session_id;
+      html += "<tr>"
+        + "<td><span class='session-id' onclick=\"showDetail('" + r.session_id + "')\" title='" + r.session_id + "'>" + shortId + "</span></td>"
+        + "<td>" + (r.target_host || r.target_id || "-") + "</td>"
+        + "<td>" + (r.requested_by || "-") + "</td>"
+        + "<td>" + fmtTime(r.started_at) + "</td>"
+        + "<td>" + fmtTime(r.ended_at) + "</td>"
+        + "<td><div class='btn-group'>"
+        + "<button class='btn btn-sm btn-primary' onclick=\"playRecording('" + r.session_id + "', '" + esc(r.target_host || r.target_id || "") + "')\">Play</button>"
+        + "<a class='btn btn-sm btn-ghost' href='" + r.recording_url + "'>Download</a>"
+        + "</div></td></tr>";
+    });
+
+    html += "</tbody></table>";
+    c.innerHTML = html;
+  }).catch(function() {
+    document.getElementById("recordings-container").innerHTML = "<div class='empty'>Failed to load recordings</div>";
+  });
+}
+
+function clearRecDate() {
+  document.getElementById("f-rec-date").value = "";
+  loadRecordings();
+}
+
+// ===================== RECORDING PLAYER =====================
+function playRecording(sessionId, label) {
+  document.getElementById("player-title").textContent = "Recording — " + label + " (" + sessionId.substring(0, 12) + ")";
+  var video = document.getElementById("player-video");
+  video.src = API + "/sessions/" + sessionId + "/recording";
+  video.load();
+  openModal("modal-player");
+  video.play().catch(function(){});
+}
+
+function closePlayer() {
+  closeModal("modal-player");
+  stopPlayer();
+}
+
+function stopPlayer() {
+  var v = document.getElementById("player-video");
+  v.pause(); v.removeAttribute("src"); v.load();
+}
+
+// ===================== ACTIONS =====================
+function dlLauncher(id) { window.location.href = API + "/sessions/" + id + "/launcher"; }
+function dlRDP(id)      { window.location.href = API + "/sessions/" + id + "/rdp-file"; }
+
+function killSession(id) {
+  if (!confirm("Terminate session " + id.substring(0, 12) + "?")) return;
+  killSessionDirect(id);
+}
+
+function killSessionDirect(id) {
   fetch(API + "/sessions/" + id + "/terminate", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({reason: "Terminated via dashboard", notify_user: true})
-  })
-  .then(function(r) {
-    if (!r.ok) return r.json().then(function(e) { throw new Error(e.error || "request failed"); });
-    toast("Session " + id + " terminated", "success");
-    loadSessions();
-    loadHealth();
-  })
-  .catch(function(err) { toast("Failed: " + err.message, "error"); });
+  }).then(function(r) {
+    if (!r.ok) return r.json().then(function(e) { throw new Error(e.error || "failed"); });
+    toast("Session terminated", "success");
+    loadSessions(); loadHealth();
+  }).catch(function(err) { toast("Failed: " + err.message, "error"); });
 }
 
-// ---- Toast ----
+// ===================== HELPERS =====================
+function fmtTime(iso) {
+  if (!iso) return "-";
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString(undefined, {month:"short", day:"numeric"})
+    + " " + d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
+}
+
+function fmtTimeFull(iso) {
+  if (!iso) return "-";
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleString();
+}
+
+function esc(s) {
+  if (!s) return "";
+  var d = document.createElement("div");
+  d.appendChild(document.createTextNode(s));
+  return d.innerHTML;
+}
+
+function copyBtn(text) {
+  if (!text) return "";
+  return " <button class='copy-btn' onclick=\"copyText('" + esc(text).replace(/'/g, "\\'") + "')\">copy</button>";
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(function() {
+    toast("Copied", "success");
+  }).catch(function() {
+    // Fallback
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    toast("Copied", "success");
+  });
+}
+
 function toast(msg, type) {
-  var el = document.getElementById("toast");
+  var el = document.createElement("div");
+  el.className = "toast toast-" + (type || "success");
   el.textContent = msg;
-  el.className = type === "error" ? "toast-error" : "toast-success";
-  el.style.display = "block";
-  setTimeout(function() { el.style.display = "none"; }, 5000);
+  var container = document.getElementById("toasts");
+  container.appendChild(el);
+  setTimeout(function() { el.remove(); }, 4000);
 }
 
-// ---- Init ----
+// ===================== INIT =====================
 loadHealth();
 loadTargets();
 loadSessions();
