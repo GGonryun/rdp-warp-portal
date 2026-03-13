@@ -29,8 +29,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
-	// Strip UTF-8 BOM if present (PowerShell's Out-File writes it by default)
+	// Strip UTF-8 BOM and \r characters that PowerShell's Out-File adds.
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	data = bytes.ReplaceAll(data, []byte{'\r'}, nil)
 
 	cfg := &Config{
 		ListenAddr:            "0.0.0.0:8080",

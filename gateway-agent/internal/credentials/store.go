@@ -107,8 +107,9 @@ func (s *Store) load() error {
 		return fmt.Errorf("read credentials file: %w", err)
 	}
 
-	// Strip UTF-8 BOM that PowerShell's Out-File adds by default.
+	// Strip UTF-8 BOM and \r characters that PowerShell's Out-File adds.
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	data = bytes.ReplaceAll(data, []byte{'\r'}, nil)
 
 	var cf CredentialsFile
 	if err := json.Unmarshal(data, &cf); err != nil {

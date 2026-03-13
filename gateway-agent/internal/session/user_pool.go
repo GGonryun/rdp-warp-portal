@@ -29,8 +29,9 @@ func NewUserPool(cfg *config.Config) (*UserPool, error) {
 		return nil, fmt.Errorf("read user pool file: %w", err)
 	}
 
-	// Strip UTF-8 BOM that PowerShell's Out-File adds by default.
+	// Strip UTF-8 BOM and \r characters that PowerShell's Out-File adds.
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	data = bytes.ReplaceAll(data, []byte{'\r'}, nil)
 
 	var poolCfg UserPoolConfig
 	if err := json.Unmarshal(data, &poolCfg); err != nil {
