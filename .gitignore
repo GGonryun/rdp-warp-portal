@@ -6,7 +6,6 @@
 *.dylib
 
 # Go build/test artifacts
-gateway-agent/bin/
 *.test
 *.out
 *.prof
