@@ -121,7 +121,7 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 	gatewayHost := s.cfg.GatewayHost()
 	rdpContent := fmt.Sprintf(
 		"full address:s:%s\r\n"+
-			"username:s:%s\r\n"+
+			"username:s:.\\%s\r\n"+
 			"prompt for credentials:i:0\r\n"+
 			"authentication level:i:0\r\n"+
 			"redirectclipboards:i:1\r\n"+
@@ -130,7 +130,7 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"shell working directory:s:C:\\Gateway\r\n"+
 			"gatewayhostname:s:%s\r\n"+
 			"gatewayusagemethod:i:2\r\n"+
-			"gatewaycredentialssource:i:4\r\n"+
+			"gatewaycredentialssource:i:0\r\n"+
 			"gatewayprofileusagemethod:i:1\r\n",
 		hostname, sess.GatewayUser, sess.AlternateShell, gatewayHost,
 	)
@@ -165,21 +165,21 @@ func (s *Server) handleLauncher(w http.ResponseWriter, r *http.Request) {
 			"echo Connecting to bastion session %s...\r\n"+
 			"echo.\r\n"+
 			"REM Store credentials for RD Gateway authentication\r\n"+
-			"cmdkey /generic:%s /user:%s /pass:%s\r\n"+
+			"cmdkey /generic:%s /user:.\\%s /pass:%s\r\n"+
 			"REM Store credentials for RDP server authentication\r\n"+
-			"cmdkey /generic:TERMSRV/%s /user:%s /pass:%s\r\n"+
+			"cmdkey /generic:TERMSRV/%s /user:.\\%s /pass:%s\r\n"+
 			"REM Write temporary RDP file with gateway settings\r\n"+
 			"set RDPFILE=%%TEMP%%\\gateway-session-%s.rdp\r\n"+
 			"(\r\n"+
 			"echo full address:s:%s\r\n"+
-			"echo username:s:%s\r\n"+
+			"echo username:s:.\\%s\r\n"+
 			"echo prompt for credentials:i:0\r\n"+
 			"echo authentication level:i:0\r\n"+
 			"echo redirectclipboards:i:1\r\n"+
 			"echo redirectdrives:i:0\r\n"+
 			"echo gatewayhostname:s:%s\r\n"+
 			"echo gatewayusagemethod:i:2\r\n"+
-			"echo gatewaycredentialssource:i:4\r\n"+
+			"echo gatewaycredentialssource:i:0\r\n"+
 			"echo gatewayprofileusagemethod:i:1\r\n"+
 			") > %%RDPFILE%%\r\n"+
 			"mstsc %%RDPFILE%% /f\r\n"+
