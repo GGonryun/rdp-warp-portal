@@ -77,7 +77,7 @@ func (p *UserPool) Acquire(sessionID string) (username string, password string, 
 		return "", "", fmt.Errorf("user pool exhausted: all %d users are in use", len(p.users))
 	}
 
-	pwd := generateSecurePassword(24)
+	pwd := generateSessionToken()
 
 	if err := setWindowsUserPassword(found, pwd); err != nil {
 		return "", "", fmt.Errorf("reset password for %s: %w", found, err)
@@ -103,11 +103,35 @@ func (p *UserPool) Available() int {
 	return len(p.users) - len(p.inUse)
 }
 
+// RotatePassword generates a new random password and sets it on the Windows
+// account. This invalidates any previously issued session token.
+func (p *UserPool) RotatePassword(username string) error {
+	pwd := generateSecurePassword(24)
+	return setWindowsUserPassword(username, pwd)
+}
+
 // InUse returns the number of users currently assigned to sessions.
 func (p *UserPool) InUse() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.inUse)
+}
+
+const tokenCharset = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+const tokenLength = 6
+
+// generateSessionToken produces a 6-character uppercase alphanumeric token
+// using crypto/rand. Ambiguous characters (0/O, 1/I/L) are excluded.
+func generateSessionToken() string {
+	b := make([]byte, tokenLength)
+	for i := range b {
+		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(tokenCharset))))
+		if err != nil {
+			panic(fmt.Sprintf("crypto/rand failed: %v", err))
+		}
+		b[i] = tokenCharset[idx.Int64()]
+	}
+	return string(b)
 }
 
 // generateSecurePassword produces a cryptographically random alphanumeric

@@ -35,8 +35,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		TargetID:    sess.TargetID,
 		TargetHost:  sess.TargetHost,
 		TargetName:  sess.TargetName,
+		Token:       sess.GatewayPass,
 		GatewayHost: hostname,
-		GatewayPort: 443,
+		GatewayPort: 3389,
 		GatewayUser: sess.GatewayUser,
 		GatewayPass: sess.GatewayPass,
 		ExpiresAt:   sess.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -73,8 +74,10 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, session.SessionListResponse{Sessions: summaries})
 }
 
-// sessionDetail is a response struct that mirrors Session but omits the
-// gateway_pass field from JSON serialisation.
+// sessionDetail is a response struct that mirrors Session. The Token field
+// is only populated while the session is pending/ready (before the user
+// connects), after which the gateway password is rotated and the token
+// becomes empty.
 type sessionDetail struct {
 	ID             string            `json:"id"`
 	Status         string            `json:"status"`
@@ -84,6 +87,7 @@ type sessionDetail struct {
 	TargetUser     string            `json:"target_user"`
 	RequestedBy    string            `json:"requested_by"`
 	GatewayUser    string            `json:"gateway_user"`
+	Token          string            `json:"token,omitempty"`
 	RDSSessionID   int               `json:"rds_session_id,omitempty"`
 	RecordingDir   string            `json:"recording_dir"`
 	StartedAt      string            `json:"started_at"`
@@ -95,8 +99,8 @@ type sessionDetail struct {
 	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
-// toSessionDetail converts a Session to a sessionDetail, intentionally
-// omitting GatewayPass.
+// toSessionDetail converts a Session to a sessionDetail. The Token field is
+// populated only while the session is awaiting connection (pending/ready).
 func toSessionDetail(sess *session.Session) sessionDetail {
 	d := sessionDetail{
 		ID:            sess.ID,
@@ -113,6 +117,12 @@ func toSessionDetail(sess *session.Session) sessionDetail {
 		ExpiresAt:     sess.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 		RecordingPath: sess.RecordingPath,
 		Metadata:      sess.Metadata,
+	}
+	// Expose the session token only while the session is waiting for a
+	// connection. Once the user connects, the password is rotated and
+	// GatewayPass is cleared.
+	if sess.GatewayPass != "" {
+		d.Token = sess.GatewayPass
 	}
 	if sess.ConnectedAt != nil {
 		t := sess.ConnectedAt.Format("2006-01-02T15:04:05Z07:00")

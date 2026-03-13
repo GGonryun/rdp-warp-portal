@@ -519,14 +519,18 @@ function createSession() {
     res.style.display = "block";
     res.innerHTML = "<div style='background:var(--bg-2);border-radius:var(--radius-sm);padding:0.75rem;'>"
       + "<div style='margin-bottom:0.5rem;font-weight:600;color:var(--text-0);'>Session created: <span class='session-id' onclick=\"showDetail('" + d.session_id + "')\">" + d.session_id + "</span></div>"
+      + "<div style='background:var(--bg-0);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:0.75rem;margin:0.5rem 0;'>"
+      + "<div style='font-size:0.7rem;color:var(--blue);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.25rem;'>Session Token (single-use)</div>"
+      + "<div style='display:flex;align-items:center;gap:0.5rem;'>"
+      + "<code style='font-size:1.1rem;color:var(--text-0);letter-spacing:0.05em;flex:1;word-break:break-all;'>" + esc(d.gateway_pass) + "</code>"
+      + "<button class='btn btn-sm btn-primary' onclick=\"copyText('" + esc(d.gateway_pass) + "')\">Copy</button>"
+      + "</div>"
+      + "<div style='font-size:0.72rem;color:var(--text-3);margin-top:0.35rem;'>User: <code>" + esc(d.gateway_user) + "</code> &mdash; Enter this token when prompted by the RDP file. It expires after first connection.</div>"
+      + "</div>"
       + "<div class='btn-group'>"
-      + "<button class='btn btn-sm btn-green' onclick=\"dlLauncher('" + d.session_id + "')\">Download Launcher</button>"
+      + "<button class='btn btn-sm btn-green' onclick=\"dlLauncher('" + d.session_id + "')\">Launcher (.bat auto-login)</button>"
       + "<button class='btn btn-sm btn-ghost' onclick=\"dlRDP('" + d.session_id + "')\">RDP File</button>"
       + "<button class='btn btn-sm btn-primary' onclick=\"openMonitorModal('" + d.session_id + "')\">Monitor</button>"
-      + "<button class='btn btn-sm btn-ghost' onclick=\"showDetail('" + d.session_id + "')\">Details</button>"
-      + "</div>"
-      + "<div style='margin-top:0.5rem;font-size:0.78rem;color:var(--text-2);'>"
-      + "User: <code>" + esc(d.gateway_user) + "</code> &middot; Pass: <code>" + esc(d.gateway_pass) + "</code>"
       + "</div></div>";
     toast("Session " + d.session_id.substring(0, 12) + " created", "success");
     loadSessions();
@@ -545,7 +549,21 @@ function showDetail(id) {
     var alive = ["pending","ready","active","disconnected","launching"].indexOf(d.status) >= 0;
     var passHidden = true;
 
-    var html = "<div class='detail-grid'>"
+    var html = "";
+
+    // Show session token prominently if available (pending/ready sessions)
+    if (d.token) {
+      html += "<div style='background:var(--bg-0);border:1px solid var(--blue);border-radius:var(--radius-sm);padding:0.75rem;margin-bottom:1rem;'>"
+        + "<div style='font-size:0.7rem;color:var(--blue);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:0.25rem;'>Session Token (single-use)</div>"
+        + "<div style='display:flex;align-items:center;gap:0.5rem;'>"
+        + "<code style='font-size:1.1rem;color:var(--text-0);letter-spacing:0.05em;flex:1;word-break:break-all;'>" + esc(d.token) + "</code>"
+        + "<button class='btn btn-sm btn-primary' onclick=\"copyText('" + esc(d.token) + "')\">Copy</button>"
+        + "</div>"
+        + "<div style='font-size:0.72rem;color:var(--text-3);margin-top:0.35rem;'>Enter this when prompted by the RDP file. Expires after first connection.</div>"
+        + "</div>";
+    }
+
+    html += "<div class='detail-grid'>"
       + detailItem("Session ID", "<span class='mono'>" + d.id + "</span>" + copyBtn(d.id))
       + detailItem("Status", "<span class='badge badge-" + d.status + "'>" + d.status + "</span>")
       + detailItem("Target", (d.target_name || d.target_id) + " (" + (d.target_host || "-") + ")")

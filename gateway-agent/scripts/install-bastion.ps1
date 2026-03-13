@@ -831,6 +831,35 @@ if ($PSCmdlet.ShouldProcess("RDP-Tcp WinStation", "Allow alternate shell")) {
     Write-Host "  RDP-Tcp: allow client alternate shell" -ForegroundColor Green
 }
 
+# --- RDS Security: Use RDP security layer instead of NLA ---
+# NLA shows a separate CredSSP dialog before the session starts.
+# RDP security layer shows the standard Windows login screen inside the session.
+# This is required for the .rdp file username pre-fill to work smoothly.
+if ($PSCmdlet.ShouldProcess("RDS security layer", "Configure for minimal prompts")) {
+    $rdpTcpPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+    Set-ItemProperty -Path $rdpTcpPath -Name "SecurityLayer" -Value 0 -Type DWord
+    Set-ItemProperty -Path $rdpTcpPath -Name "UserAuthentication" -Value 0 -Type DWord
+    Write-Host "  Set RDP security layer (NLA disabled)" -ForegroundColor Green
+
+    # Also set via Group Policy path (takes precedence over WinStation settings)
+    $tsPolPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+    New-Item -Path $tsPolPath -Force -ErrorAction SilentlyContinue | Out-Null
+    Set-ItemProperty -Path $tsPolPath -Name "SecurityLayer" -Value 0 -Type DWord
+    Set-ItemProperty -Path $tsPolPath -Name "fPromptForPassword" -Value 0 -Type DWord
+    Set-ItemProperty -Path $tsPolPath -Name "AuthenticationLevel" -Value 0 -Type DWord
+    Write-Host "  Set Group Policy: no password prompt, no auth verification" -ForegroundColor Green
+
+    # Suppress legal notice banners that appear before login
+    $systemPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    Set-ItemProperty -Path $systemPolPath -Name "legalnoticecaption" -Value "" -Type String
+    Set-ItemProperty -Path $systemPolPath -Name "legalnoticetext" -Value "" -Type String
+    Write-Host "  Cleared legal notice banners" -ForegroundColor Green
+
+    # Restart terminal services to apply all changes
+    Restart-Service -Name "TermService" -Force
+    Write-Host "  Restarted Terminal Services" -ForegroundColor Green
+}
+
 # ------------------------------------------------------------------
 # Step 6b: Lock down bastion desktop for session users
 # ------------------------------------------------------------------

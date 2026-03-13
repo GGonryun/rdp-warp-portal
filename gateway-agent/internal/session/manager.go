@@ -282,8 +282,13 @@ func (m *Manager) checkRDSSessions() {
 		}
 	}
 
+	type rotateInfo struct {
+		sessionID   string
+		gatewayUser string
+	}
+	var toRotate []rotateInfo
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	for _, sess := range m.sessions {
 		// Only monitor sessions that are still alive.
@@ -300,9 +305,10 @@ func (m *Manager) checkRDSSessions() {
 			// RDS session is active.
 			sess.RDSSessionID = rds.ID
 			if sess.Status == StatusReady || sess.Status == StatusPending {
-				// First connection.
+				// First connection — schedule token rotation.
 				sess.Status = StatusActive
 				sess.ConnectedAt = &now
+				toRotate = append(toRotate, rotateInfo{sess.ID, sess.GatewayUser})
 			} else if sess.Status == StatusDisconnected {
 				// Reconnection.
 				sess.Status = StatusActive
@@ -323,6 +329,22 @@ func (m *Manager) checkRDSSessions() {
 			sess.Status = StatusDisconnected
 			sess.DisconnectedAt = &now
 		}
+	}
+	m.mu.Unlock()
+
+	// Rotate passwords outside the lock — this invalidates the session
+	// token so it cannot be reused for another connection.
+	for _, ri := range toRotate {
+		if err := m.userPool.RotatePassword(ri.gatewayUser); err != nil {
+			log.Printf("session %s: failed to rotate token: %v", ri.sessionID, err)
+			continue
+		}
+		m.mu.Lock()
+		if sess, ok := m.sessions[ri.sessionID]; ok {
+			sess.GatewayPass = ""
+		}
+		m.mu.Unlock()
+		log.Printf("session %s: session token invalidated after connect", ri.sessionID)
 	}
 }
 

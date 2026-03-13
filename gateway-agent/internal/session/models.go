@@ -52,6 +52,7 @@ type CreateSessionResponse struct {
 	TargetID    string `json:"target_id"`
 	TargetHost  string `json:"target_host"`
 	TargetName  string `json:"target_name"`
+	Token       string `json:"token"`
 	GatewayHost string `json:"gateway_host"`
 	GatewayPort int    `json:"gateway_port"`
 	GatewayUser string `json:"gateway_user"`
