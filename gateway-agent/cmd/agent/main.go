@@ -21,6 +21,7 @@ func main() {
 	uninstall := flag.Bool("uninstall", false, "Uninstall the bastion configuration")
 	upgrade := flag.Bool("upgrade", false, "Stop service, update binary + scripts, restart service")
 	stop := flag.Bool("stop", false, "Stop the GatewayAgent service")
+	status := flag.Bool("status", false, "Show GatewayAgent service status")
 	installDir := flag.String("install-dir", `C:\Gateway`, "Installation directory")
 	flag.Parse()
 
@@ -33,6 +34,9 @@ func main() {
 	}
 
 	switch {
+	case *status:
+		showStatus()
+		waitForKeypress()
 	case *stop:
 		stopService()
 		waitForKeypress()
@@ -70,6 +74,7 @@ func showUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  gateway-agent.exe --install       Install and configure the bastion (run as Admin)")
 	fmt.Println("  gateway-agent.exe --upgrade       Stop service, update binary + scripts, restart")
+	fmt.Println("  gateway-agent.exe --status        Show service status")
 	fmt.Println("  gateway-agent.exe --stop          Stop the GatewayAgent service")
 	fmt.Println("  gateway-agent.exe --uninstall     Remove bastion configuration")
 	fmt.Println("  gateway-agent.exe --config PATH   Run interactively with a config file")
@@ -83,6 +88,25 @@ func waitForKeypress() {
 	fmt.Println()
 	fmt.Print("Press Enter to close...")
 	bufio.NewReader(os.Stdin).ReadBytes('\n')
+}
+
+// showStatus queries the Windows Service Control Manager and prints the
+// GatewayAgent service state and binary path.
+func showStatus() {
+	cmd := exec.Command("sc.exe", "query", "GatewayAgent")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Println("GatewayAgent service is not installed.")
+		return
+	}
+	fmt.Println(string(output))
+
+	// Also show the registered binary path
+	cfg := exec.Command("sc.exe", "qc", "GatewayAgent")
+	cfgOutput, err := cfg.CombinedOutput()
+	if err == nil {
+		fmt.Println(string(cfgOutput))
+	}
 }
 
 // stopService stops the GatewayAgent Windows service if it is running.
