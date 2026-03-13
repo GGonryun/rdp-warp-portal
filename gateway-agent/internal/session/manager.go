@@ -93,7 +93,6 @@ func (m *Manager) CreateSession(req *CreateSessionRequest) (*Session, error) {
 		TargetHost:  target.Host,
 		TargetName:  target.Name,
 		TargetUser:  target.Username,
-		RequestedBy: req.RequestedBy,
 		GatewayUser: gwUser,
 		GatewayPass: gwPass,
 		StartedAt:   now,
@@ -125,18 +124,15 @@ func (m *Manager) GetSession(id string) (*Session, error) {
 	return sess, nil
 }
 
-// ListSessions returns all sessions, optionally filtered by status and/or
-// requestedBy. Empty filter values match everything.
-func (m *Manager) ListSessions(status string, requestedBy string) []*Session {
+// ListSessions returns all sessions, optionally filtered by status.
+// An empty filter value matches everything.
+func (m *Manager) ListSessions(status string) []*Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var out []*Session
 	for _, sess := range m.sessions {
 		if status != "" && sess.Status != status {
-			continue
-		}
-		if requestedBy != "" && sess.RequestedBy != requestedBy {
 			continue
 		}
 		out = append(out, sess)

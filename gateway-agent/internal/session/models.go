@@ -21,7 +21,6 @@ type Session struct {
 	TargetHost     string            `json:"target_host"`
 	TargetName     string            `json:"target_name"`
 	TargetUser     string            `json:"target_user"`
-	RequestedBy    string            `json:"requested_by"`
 	GatewayUser    string            `json:"gateway_user"`
 	GatewayPass    string            `json:"gateway_pass,omitempty"`
 	RDSSessionID   int               `json:"rds_session_id,omitempty"`
@@ -39,7 +38,6 @@ type Session struct {
 // CreateSessionRequest is the body for POST /api/v1/sessions.
 type CreateSessionRequest struct {
 	TargetID       string            `json:"target_id"`
-	RequestedBy    string            `json:"requested_by"`
 	TimeoutMinutes int               `json:"timeout_minutes,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 }
@@ -74,7 +72,6 @@ type SessionSummary struct {
 	TargetID    string `json:"target_id"`
 	TargetHost  string `json:"target_host"`
 	TargetName  string `json:"target_name"`
-	RequestedBy string `json:"requested_by"`
 	StartedAt   string `json:"started_at"`
 	ExpiresAt   string `json:"expires_at"`
 }

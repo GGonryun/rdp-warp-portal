@@ -836,10 +836,12 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     }
     Write-Host "  Cleaned up legacy InitialProgram registry values" -ForegroundColor Green
 
-    # Register HKLM Run key so session-router.ps1 launches at every interactive logon
+    # Register HKLM Run key so session-router.ps1 launches at every interactive logon.
+    # NOTE: Do NOT use -WindowStyle Hidden here — mstsc.exe needs a visible desktop
+    # context to render. Hidden windows cause mstsc to exit immediately.
     $runKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
     Set-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" `
-        -Value "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallDir\scripts\session-router.ps1`"" `
+        -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallDir\scripts\session-router.ps1`"" `
         -Type String -Force
     Write-Host "  Registered HKLM Run key: GatewayLauncher" -ForegroundColor Green
 }
@@ -1376,14 +1378,42 @@ if ($PSCmdlet.ShouldProcess($routerPath, "Deploy session router script")) {
 # For pool users with active session: runs session-launch.ps1 then logoff.
 # For admin users: exits silently so they get a normal desktop.
 
+$logFile = "C:\Gateway\logs\session-router.log"
+function Write-RouterLog {
+    param([string]$Message)
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $entry = "[$ts] [session-router] $Message"
+    try { $entry | Out-File -Append -Encoding UTF8 $logFile } catch { }
+    Write-Host $entry
+}
+
+# Ensure log directory exists
+New-Item -ItemType Directory -Force -Path "C:\Gateway\logs" 2>$null | Out-Null
+
+Write-RouterLog "Logon detected for user: $($env:USERNAME)"
+
 $launcherPath = "C:\Gateway\scripts\launch-$($env:USERNAME).ps1"
 
 if (Test-Path $launcherPath) {
+    Write-RouterLog "Found launcher: $launcherPath"
+
+    # Wait for desktop to fully initialize before launching mstsc
+    Start-Sleep -Seconds 3
+
     try {
+        Write-RouterLog "Executing launcher..."
         & powershell.exe -ExecutionPolicy Bypass -File $launcherPath
-    } catch { }
+        Write-RouterLog "Launcher exited normally"
+    } catch {
+        Write-RouterLog "ERROR: Launcher failed: $_"
+    }
+
+    # session-launch.ps1 handles logoff itself, but as a safety net:
+    Start-Sleep -Seconds 2
+    Write-RouterLog "Safety logoff"
     logoff.exe
 } else {
+    Write-RouterLog "No launcher file — admin session, exiting silently"
     exit 0
 }
 '@

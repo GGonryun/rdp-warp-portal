@@ -154,7 +154,6 @@ const monitorHTML = `<!DOCTYPE html>
 
         var lines = [];
         if (data.target_name)  lines.push("Target: " + data.target_name + " (" + data.target_host + ")");
-        if (data.requested_by) lines.push("Requested by: " + data.requested_by);
         if (data.started_at)   lines.push("Started: " + new Date(data.started_at).toLocaleString());
         if (data.expires_at)   lines.push("Expires: " + new Date(data.expires_at).toLocaleString());
         infoEl.innerHTML = lines.join("<br>");

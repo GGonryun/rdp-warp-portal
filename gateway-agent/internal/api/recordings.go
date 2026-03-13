@@ -16,7 +16,6 @@ type recordingEntry struct {
 	SessionID    string `json:"session_id"`
 	TargetID     string `json:"target_id"`
 	TargetHost   string `json:"target_host"`
-	RequestedBy  string `json:"requested_by"`
 	StartedAt    string `json:"started_at"`
 	EndedAt      string `json:"ended_at"`
 	RecordingURL string `json:"recording_url"`
@@ -76,7 +75,7 @@ func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get all completed sessions.
-	completedSessions := s.mgr.ListSessions(session.StatusCompleted, "")
+	completedSessions := s.mgr.ListSessions(session.StatusCompleted)
 
 	var entries []recordingEntry
 	for _, sess := range completedSessions {
@@ -103,7 +102,6 @@ func (s *Server) handleListRecordings(w http.ResponseWriter, r *http.Request) {
 			SessionID:    sess.ID,
 			TargetID:     sess.TargetID,
 			TargetHost:   sess.TargetHost,
-			RequestedBy:  sess.RequestedBy,
 			StartedAt:    sess.StartedAt.Format(time.RFC3339),
 			EndedAt:      endedAt,
 			RecordingURL: fmt.Sprintf("/api/v1/sessions/%s/recording", sess.ID),

@@ -255,10 +255,6 @@ const dashboardHTML = `<!DOCTYPE html>
           <label>Target</label>
           <select id="f-target"><option value="">Loading...</option></select>
         </div>
-        <div class="form-group">
-          <label>Requested By</label>
-          <input type="text" id="f-requester" placeholder="your name">
-        </div>
         <div class="form-group narrow">
           <label>Timeout</label>
           <input type="number" id="f-timeout" value="60" min="5" max="480">
@@ -455,7 +451,7 @@ function loadSessions() {
     d.sessions.sort(function(a, b) { return new Date(b.started_at) - new Date(a.started_at); });
 
     var html = "<table><thead><tr>"
-      + "<th>Session</th><th>Status</th><th>Target</th><th>Requested By</th>"
+      + "<th>Session</th><th>Status</th><th>Target</th>"
       + "<th>Started</th><th>Expires</th><th>Actions</th></tr></thead><tbody>";
 
     d.sessions.forEach(function(s) {
@@ -478,7 +474,6 @@ function loadSessions() {
         + "<td><span class='session-id' onclick=\"showDetail('" + s.session_id + "')\" title='" + s.session_id + "'>" + shortId + "</span></td>"
         + "<td><span class='badge badge-" + s.status + "'>" + s.status + "</span></td>"
         + "<td>" + (s.target_name || s.target_id || "-") + "</td>"
-        + "<td>" + (s.requested_by || "-") + "</td>"
         + "<td>" + started + "</td>"
         + "<td>" + expires + "</td>"
         + "<td><div class='btn-group'>" + acts + "</div></td>"
@@ -495,11 +490,9 @@ function loadSessions() {
 // ===================== CREATE SESSION =====================
 function createSession() {
   var targetId = document.getElementById("f-target").value;
-  var requester = document.getElementById("f-requester").value.trim();
   var timeout = parseInt(document.getElementById("f-timeout").value) || 60;
 
   if (!targetId) { toast("Select a target", "error"); return; }
-  if (!requester) { toast("Enter your name", "error"); return; }
 
   var btn = document.getElementById("btn-create");
   btn.disabled = true; btn.textContent = "Creating...";
@@ -507,7 +500,7 @@ function createSession() {
   fetch(API + "/sessions", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({target_id: targetId, requested_by: requester, timeout_minutes: timeout})
+    body: JSON.stringify({target_id: targetId, timeout_minutes: timeout})
   })
   .then(function(r) {
     if (!r.ok) return r.json().then(function(e) { throw new Error(e.error || "request failed"); });
@@ -567,7 +560,6 @@ function showDetail(id) {
       + detailItem("Status", "<span class='badge badge-" + d.status + "'>" + d.status + "</span>")
       + detailItem("Target", (d.target_name || d.target_id) + " (" + (d.target_host || "-") + ")")
       + detailItem("Target User", d.target_user || "-")
-      + detailItem("Requested By", d.requested_by || "-")
       + detailItem("Gateway User", "<span class='mono'>" + esc(d.gateway_user || "-") + "</span>" + copyBtn(d.gateway_user || ""))
       + detailItem("Recording Dir", "<span class='mono' style='font-size:0.75rem;'>" + esc(d.recording_dir || "-") + "</span>")
       + detailItem("RDS Session ID", d.rds_session_id || "-")
@@ -653,7 +645,6 @@ function fetchMonitorInfo() {
     var parts = [];
     parts.push("<span class='badge badge-" + d.status + "'>" + d.status + "</span>");
     if (d.target_name) parts.push("Target: " + d.target_name + " (" + (d.target_host || "") + ")");
-    if (d.requested_by) parts.push("By: " + d.requested_by);
     if (d.started_at) parts.push("Started: " + fmtTime(d.started_at));
     document.getElementById("monitor-info").innerHTML = parts.join(" &middot; ");
   }).catch(function(){});
@@ -700,7 +691,7 @@ function loadRecordings() {
     }
 
     var html = "<table><thead><tr>"
-      + "<th>Session</th><th>Target</th><th>Requested By</th>"
+      + "<th>Session</th><th>Target</th>"
       + "<th>Started</th><th>Ended</th><th>Actions</th></tr></thead><tbody>";
 
     d.recordings.forEach(function(r) {
@@ -708,7 +699,6 @@ function loadRecordings() {
       html += "<tr>"
         + "<td><span class='session-id' onclick=\"showDetail('" + r.session_id + "')\" title='" + r.session_id + "'>" + shortId + "</span></td>"
         + "<td>" + (r.target_host || r.target_id || "-") + "</td>"
-        + "<td>" + (r.requested_by || "-") + "</td>"
         + "<td>" + fmtTime(r.started_at) + "</td>"
         + "<td>" + fmtTime(r.ended_at) + "</td>"
         + "<td><div class='btn-group'>"

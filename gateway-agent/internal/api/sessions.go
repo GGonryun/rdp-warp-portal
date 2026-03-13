@@ -50,12 +50,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListSessions returns all sessions, optionally filtered by the
-// "status" and "requested_by" query parameters.
+// "status" query parameter.
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
-	requestedBy := r.URL.Query().Get("requested_by")
 
-	sessions := s.mgr.ListSessions(status, requestedBy)
+	sessions := s.mgr.ListSessions(status)
 
 	summaries := make([]session.SessionSummary, 0, len(sessions))
 	for _, sess := range sessions {
@@ -65,7 +64,6 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			TargetID:    sess.TargetID,
 			TargetHost:  sess.TargetHost,
 			TargetName:  sess.TargetName,
-			RequestedBy: sess.RequestedBy,
 			StartedAt:   sess.StartedAt.Format("2006-01-02T15:04:05Z07:00"),
 			ExpiresAt:   sess.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 		})
@@ -85,7 +83,6 @@ type sessionDetail struct {
 	TargetHost     string            `json:"target_host"`
 	TargetName     string            `json:"target_name"`
 	TargetUser     string            `json:"target_user"`
-	RequestedBy    string            `json:"requested_by"`
 	GatewayUser    string            `json:"gateway_user"`
 	Token          string            `json:"token,omitempty"`
 	RDSSessionID   int               `json:"rds_session_id,omitempty"`
@@ -109,7 +106,6 @@ func toSessionDetail(sess *session.Session) sessionDetail {
 		TargetHost:    sess.TargetHost,
 		TargetName:    sess.TargetName,
 		TargetUser:    sess.TargetUser,
-		RequestedBy:   sess.RequestedBy,
 		GatewayUser:   sess.GatewayUser,
 		RDSSessionID:  sess.RDSSessionID,
 		RecordingDir:  sess.RecordingDir,
