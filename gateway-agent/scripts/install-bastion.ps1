@@ -358,7 +358,7 @@ if ($Uninstall) {
 
     # --- Remove firewall rules ---
     Write-Host "[4/7] Removing firewall rules..." -ForegroundColor Yellow
-    foreach ($ruleName in @("Gateway-RDP", "Gateway-API", "Gateway-HTTPS")) {
+    foreach ($ruleName in @("Gateway-RDP", "Gateway-RDP-UDP", "Gateway-API", "Gateway-HTTPS")) {
         $rule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
         if ($rule) {
             if ($PSCmdlet.ShouldProcess($ruleName, "Remove firewall rule")) {
@@ -874,7 +874,20 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
 
     # Enable UDP transport (reduces perceived input latency significantly)
     Set-ItemProperty -Path $tsRegPath -Name "SelectTransport" -Value 0 -Type DWord -Force
+    # Open UDP port 3389 in firewall (required for RDP Shortpath)
+    $udpRule = Get-NetFirewallRule -DisplayName "Gateway-RDP-UDP" -ErrorAction SilentlyContinue
+    if (-not $udpRule) {
+        New-NetFirewallRule -DisplayName "Gateway-RDP-UDP" `
+            -Direction Inbound -Protocol UDP -LocalPort 3389 `
+            -Action Allow -Profile Any | Out-Null
+        Write-Host "  Opened UDP 3389 in firewall" -ForegroundColor Green
+    }
     Write-Host "  Enabled UDP transport (SelectTransport=0)" -ForegroundColor Green
+
+    # Enable AVC 444 encoding (sharper image, less bandwidth)
+    Set-ItemProperty -Path $tsRegPath -Name "AVC444ModePreferred" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $tsRegPath -Name "AVCHardwareEncodePreferred" -Value 1 -Type DWord -Force
+    Write-Host "  Enabled AVC 444 encoding" -ForegroundColor Green
 
     # Enable RemoteFX / GPU acceleration for RDS sessions
     Set-ItemProperty -Path $tsRegPath -Name "fEnableVirtualizedGraphics" -Value 1 -Type DWord -Force

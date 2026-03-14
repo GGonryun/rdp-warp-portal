@@ -54,6 +54,15 @@ public class Win32Console {
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")]   public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
+public class Win32Process {
+    [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll")] public static extern bool SetPriorityClass(IntPtr hProcess, uint priorityClass);
+    [DllImport("kernel32.dll")] public static extern bool SetProcessAffinityMask(IntPtr hProcess, UIntPtr affinityMask);
+    [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr handle);
+    public const uint PROCESS_SET_INFORMATION = 0x0200;
+    public const uint ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000;
+    public const uint BELOW_NORMAL_PRIORITY_CLASS = 0x00004000;
+}
 "@ -ErrorAction SilentlyContinue
 $consoleHwnd = [Win32Console]::GetConsoleWindow()
 if ($consoleHwnd -ne [IntPtr]::Zero) {
@@ -235,7 +244,7 @@ connection type:i:6
 networkautodetect:i:0
 bandwidthautodetect:i:0
 compression:i:1
-videoplaybackmode:i:0
+videoplaybackmode:i:1
 disable wallpaper:i:1
 disable full window drag:i:1
 disable menu anims:i:1
@@ -366,12 +375,43 @@ redirectwebauthn:i:0
         return @{ Width = $s.Width; Height = $s.Height }
     }
 
+    # Set-ProcessPriority: adjust the Windows priority class of a process.
+    function Set-ProcessPriority {
+        param([int]$Pid, [uint32]$PriorityClass)
+        $handle = [Win32Process]::OpenProcess([Win32Process]::PROCESS_SET_INFORMATION, $false, [uint32]$Pid)
+        if ($handle -ne [IntPtr]::Zero) {
+            [Win32Process]::SetPriorityClass($handle, $PriorityClass) | Out-Null
+            [Win32Process]::CloseHandle($handle) | Out-Null
+        }
+    }
+
+    # Set-ProcessAffinity: pin a process to specific CPU cores (bitmask).
+    function Set-ProcessAffinity {
+        param([int]$Pid, [uint64]$AffinityMask)
+        $handle = [Win32Process]::OpenProcess([Win32Process]::PROCESS_SET_INFORMATION, $false, [uint32]$Pid)
+        if ($handle -ne [IntPtr]::Zero) {
+            [Win32Process]::SetProcessAffinityMask($handle, [UIntPtr]::new($AffinityMask)) | Out-Null
+            [Win32Process]::CloseHandle($handle) | Out-Null
+        }
+    }
+
     $script:ffmpegSegCounter = 0
     $ffmpegProcess = Start-Ffmpeg -RecDir $recordingDir -FfmpegPath $ffmpegPath -SegCounter $script:ffmpegSegCounter
     if ($ffmpegProcess) {
         $ffmpegStarted = $true
         $lastSize = Get-DesktopSize
         Write-Log "ffmpeg started (PID: $($ffmpegProcess.Id))"
+
+        # Set ffmpeg to BelowNormal priority so it doesn't compete with mstsc
+        Set-ProcessPriority -Pid $ffmpegProcess.Id -PriorityClass ([Win32Process]::BELOW_NORMAL_PRIORITY_CLASS)
+        Write-Log "  ffmpeg priority set to BelowNormal"
+
+        # Pin ffmpeg to cores 0-1 on machines with 4+ cores
+        $numCPU = [Environment]::ProcessorCount
+        if ($numCPU -ge 4) {
+            Set-ProcessAffinity -Pid $ffmpegProcess.Id -AffinityMask 0x3
+            Write-Log "  ffmpeg pinned to cores 0-1 ($numCPU cores available)"
+        }
     }
 
     # ------------------------------------------------------------------
@@ -395,7 +435,9 @@ redirectwebauthn:i:0
         -ArgumentList $rdpFile, "/f" `
         -PassThru
 
-    Write-Log "mstsc launched (PID: $($mstscProcess.Id)) -- waiting for it to exit"
+    # Boost mstsc to AboveNormal priority — user-facing, latency-sensitive
+    Set-ProcessPriority -Pid $mstscProcess.Id -PriorityClass ([Win32Process]::ABOVE_NORMAL_PRIORITY_CLASS)
+    Write-Log "mstsc launched (PID: $($mstscProcess.Id), priority: AboveNormal) -- waiting for it to exit"
 
     # ------------------------------------------------------------------
     # Poll loop: wait for mstsc to exit while monitoring for desktop
@@ -423,7 +465,10 @@ redirectwebauthn:i:0
                 $ffmpegProcess = Start-Ffmpeg -RecDir $recordingDir -FfmpegPath $ffmpegPath -SegCounter $script:ffmpegSegCounter
                 if ($ffmpegProcess) {
                     $lastSize = $currentSize
-                    Write-Log "ffmpeg restarted (PID: $($ffmpegProcess.Id))"
+                    Set-ProcessPriority -Pid $ffmpegProcess.Id -PriorityClass ([Win32Process]::BELOW_NORMAL_PRIORITY_CLASS)
+                    $numCPU = [Environment]::ProcessorCount
+                    if ($numCPU -ge 4) { Set-ProcessAffinity -Pid $ffmpegProcess.Id -AffinityMask 0x3 }
+                    Write-Log "ffmpeg restarted (PID: $($ffmpegProcess.Id), priority: BelowNormal)"
                 } else {
                     Write-Log "WARNING: ffmpeg failed to restart after resize"
                     $ffmpegStarted = $false
