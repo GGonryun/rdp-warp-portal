@@ -1442,11 +1442,49 @@ $credProvDll  = "$InstallDir\bin\PinCredentialProvider.dll"
 
 if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential provider")) {
 
+    # ---- Check if native DLL already exists and is up to date ----
+    $skipBuild = $false
+    $sourceHashFile = "$InstallDir\credprov\.source_hash"
+    if (Test-Path $credProvDll) {
+        $isNative = $false
+        try {
+            [System.Reflection.AssemblyName]::GetAssemblyName($credProvDll)
+        } catch {
+            # BadImageFormatException means it's a native DLL, not .NET
+            $isNative = $true
+        }
+
+        if ($isNative) {
+            # Check if source code has changed since last build by comparing
+            # a hash of the embedded source against the stored hash.
+            $currentHash = (Get-FileHash -InputStream (
+                [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($PSCommandPath))
+            ) -Algorithm SHA256).Hash
+            $storedHash = if (Test-Path $sourceHashFile) { Get-Content $sourceHashFile -ErrorAction SilentlyContinue } else { "" }
+
+            if ($currentHash -ne $storedHash) {
+                Write-Host "  Source code changed since last build -- rebuilding" -ForegroundColor Yellow
+            } else {
+                $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
+                if (-not (Test-Path $cpRegPath)) {
+                    Write-Host "  Native DLL exists but not registered -- registering now" -ForegroundColor Yellow
+                    & regsvr32.exe /s $credProvDll
+                    New-Item -Path $cpRegPath -Force | Out-Null
+                    Set-ItemProperty -Path $cpRegPath -Name "(Default)" -Value "P0rtal PIN Credential Provider"
+                    Write-Host "  PIN credential provider registered" -ForegroundColor Green
+                } else {
+                    Write-Host "  Native DLL up to date and registered -- skipping" -ForegroundColor Green
+                }
+                $skipBuild = $true
+            }
+        }
+    }
+
     # ---- Release any existing DLL lock ----
     $needsRebootForCredProv = $false
     $finalCredProvDll = $credProvDll
 
-    if (Test-Path $credProvDll) {
+    if (-not $skipBuild -and (Test-Path $credProvDll)) {
         Write-Host "  Releasing existing DLL..." -ForegroundColor Gray
 
         # Remove credential provider registry key so LogonUI stops loading it
@@ -1484,6 +1522,7 @@ if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential pro
         }
     }
 
+  if (-not $skipBuild) {
     # ---- Locate or install MSVC Build Tools ----
     $clExe = $null
 
@@ -2144,6 +2183,11 @@ cl.exe /nologo /EHsc /W4 /O2 /LD /DUNICODE /D_UNICODE ^
 
             if ($buildExitCode -eq 0 -and (Test-Path $credProvDll)) {
                 Write-Host "  Compiled PinCredentialProvider.dll successfully" -ForegroundColor Green
+                # Save source hash so we can detect changes on next run
+                $buildHash = (Get-FileHash -InputStream (
+                    [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($PSCommandPath))
+                ) -Algorithm SHA256).Hash
+                $buildHash | Out-File -Encoding ASCII $sourceHashFile
             } else {
                 Write-Host "  WARNING: Compilation failed (exit code: $buildExitCode):" -ForegroundColor Yellow
                 $buildResult | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
@@ -2191,6 +2235,7 @@ cl.exe /nologo /EHsc /W4 /O2 /LD /DUNICODE /D_UNICODE ^
             }
         }
     }
+  } # end if (-not $skipBuild)
 }
 
 # ------------------------------------------------------------------
