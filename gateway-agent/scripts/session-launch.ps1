@@ -365,7 +365,9 @@ bandwidthautodetect:i:1
         & cmdkey /delete:$credTarget 2>$null
     }
 
-    Write-Log "Session ended -- logoff DISABLED for debugging (user stays on gateway desktop)"
+    # Logoff immediately so user never sees gateway desktop after mstsc closes.
+    Write-Log "Session ended -- logging off"
+    logoff
 
 } catch {
     # ------------------------------------------------------------------

@@ -102,7 +102,7 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"remoteapplicationmode:i:1\r\n"+
 			"remoteapplicationprogram:s:C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n"+
 			"remoteapplicationname:s:P0rtal Gateway\r\n"+
-			"remoteapplicationcmdline:s:-NoExit -ExecutionPolicy Bypass -File \"%s\" -ConfigPath \"%s\"\r\n"+
+			"remoteapplicationcmdline:s:-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File \"%s\" -ConfigPath \"%s\"\r\n"+
 			"disableremoteappcapscheck:i:1\r\n"+
 			"desktopwidth:i:1920\r\n"+
 			"desktopheight:i:1080\r\n"+
