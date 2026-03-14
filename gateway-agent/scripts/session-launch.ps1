@@ -243,49 +243,76 @@ bandwidthautodetect:i:1
     # Start ffmpeg recording (HLS)
     # ------------------------------------------------------------------
     $ffmpegStarted = $false
-    try {
-        $ffmpegArgs = @(
-            "-f", "gdigrab",
-            "-framerate", "5",
-            "-offset_x", "0",
-            "-offset_y", "0",
-            "-video_size", "1920x1080",
-            "-i", "desktop",
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-tune", "zerolatency",
-            "-crf", "30",
-            "-maxrate", "500k",
-            "-bufsize", "1000k",
-            "-threads", "1",
-            "-pix_fmt", "yuv420p",
-            "-f", "hls",
-            "-hls_time", "8",
-            "-hls_list_size", "0",
-            "-hls_flags", "append_list+independent_segments",
-            "-hls_segment_filename", (Join-Path $recordingDir "segment_%04d.ts"),
-            (Join-Path $recordingDir "playlist.m3u8")
-        )
+    Add-Type -AssemblyName System.Windows.Forms
 
-        $ffmpegProcess = Start-Process -FilePath $ffmpegPath `
-            -ArgumentList $ffmpegArgs `
-            -PassThru -NoNewWindow `
-            -RedirectStandardError (Join-Path $recordingDir "ffmpeg.log")
+    # Start-Ffmpeg: launches ffmpeg at the current desktop resolution.
+    # Returns the process object or $null on failure.
+    # Uses HLS append_list so segments stitch together across restarts.
+    function Start-Ffmpeg {
+        param([string]$RecDir, [string]$FfmpegPath, [int]$SegCounter)
+        try {
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $w = $screen.Width
+            $h = $screen.Height
+            # Ensure even dimensions (x264 requires it)
+            if ($w % 2 -ne 0) { $w-- }
+            if ($h % 2 -ne 0) { $h-- }
+            Write-Log "Starting ffmpeg at ${w}x${h} (segment counter: $SegCounter)"
 
-        Write-Log "ffmpeg started (PID: $($ffmpegProcess.Id))"
-        $ffmpegStarted = $true
+            $args = @(
+                "-f", "gdigrab",
+                "-framerate", "5",
+                "-offset_x", "0",
+                "-offset_y", "0",
+                "-video_size", "${w}x${h}",
+                "-i", "desktop",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-tune", "zerolatency",
+                "-crf", "30",
+                "-maxrate", "500k",
+                "-bufsize", "1000k",
+                "-threads", "1",
+                "-pix_fmt", "yuv420p",
+                "-f", "hls",
+                "-hls_time", "8",
+                "-hls_list_size", "0",
+                "-hls_flags", "append_list+independent_segments",
+                "-start_number", "$SegCounter",
+                "-hls_segment_filename", (Join-Path $RecDir "segment_%04d.ts"),
+                (Join-Path $RecDir "playlist.m3u8")
+            )
 
-        # Small delay to let ffmpeg initialize
-        Start-Sleep -Seconds 2
+            $logFile = Join-Path $RecDir "ffmpeg_${SegCounter}.log"
+            $proc = Start-Process -FilePath $FfmpegPath `
+                -ArgumentList $args `
+                -PassThru -NoNewWindow `
+                -RedirectStandardError $logFile
 
-        # Check if ffmpeg crashed immediately
-        if ($ffmpegProcess.HasExited) {
-            Write-Log "WARNING: ffmpeg exited early (code: $($ffmpegProcess.ExitCode)) -- session will continue without recording"
-            $ffmpegStarted = $false
+            Start-Sleep -Seconds 2
+            if ($proc.HasExited) {
+                Write-Log "WARNING: ffmpeg exited early (code: $($proc.ExitCode))"
+                return $null
+            }
+            return $proc
+        } catch {
+            Write-Log "WARNING: Failed to start ffmpeg: $_"
+            return $null
         }
-    } catch {
-        Write-Log "WARNING: Failed to start ffmpeg: $_ -- session will continue without recording"
-        $ffmpegStarted = $false
+    }
+
+    # Get current desktop size for tracking changes
+    function Get-DesktopSize {
+        $s = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        return @{ Width = $s.Width; Height = $s.Height }
+    }
+
+    $script:ffmpegSegCounter = 0
+    $ffmpegProcess = Start-Ffmpeg -RecDir $recordingDir -FfmpegPath $ffmpegPath -SegCounter $script:ffmpegSegCounter
+    if ($ffmpegProcess) {
+        $ffmpegStarted = $true
+        $lastSize = Get-DesktopSize
+        Write-Log "ffmpeg started (PID: $($ffmpegProcess.Id))"
     }
 
     # ------------------------------------------------------------------
@@ -300,25 +327,7 @@ bandwidthautodetect:i:1
     Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID -Body $activeBody
 
     # ------------------------------------------------------------------
-    # Monitor ffmpeg health in a background job (log warning if it dies)
-    # ------------------------------------------------------------------
-    $ffmpegWatcher = $null
-    if ($ffmpegStarted) {
-        $ffmpegWatcher = Start-Job -ScriptBlock {
-            param($Pid, $RecDir)
-            $proc = Get-Process -Id $Pid -ErrorAction SilentlyContinue
-            if ($proc) {
-                $proc.WaitForExit()
-                $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-                # Write a marker file so the main script can detect the crash
-                "$ts ffmpeg exited unexpectedly (code: $($proc.ExitCode))" |
-                    Out-File -Append (Join-Path $RecDir "ffmpeg_crash.log")
-            }
-        } -ArgumentList $ffmpegProcess.Id, $recordingDir
-    }
-
-    # ------------------------------------------------------------------
-    # Launch mstsc.exe -- this blocks until the user closes it
+    # Launch mstsc.exe
     # ------------------------------------------------------------------
     Write-Log "Launching mstsc to $targetHost"
     $mstscStart = Get-Date
@@ -329,8 +338,40 @@ bandwidthautodetect:i:1
 
     Write-Log "mstsc launched (PID: $($mstscProcess.Id)) -- waiting for it to exit"
 
-    # Block until mstsc exits
-    $mstscProcess.WaitForExit()
+    # ------------------------------------------------------------------
+    # Poll loop: wait for mstsc to exit while monitoring for desktop
+    # resize events. When the user resizes the RDP window, the gateway
+    # desktop resolution changes — restart ffmpeg at the new size so the
+    # recording matches. HLS append_list stitches segments seamlessly.
+    # ------------------------------------------------------------------
+    while (-not $mstscProcess.HasExited) {
+        Start-Sleep -Seconds 2
+
+        if ($ffmpegStarted -and $ffmpegProcess -and -not $ffmpegProcess.HasExited) {
+            $currentSize = Get-DesktopSize
+            if ($currentSize.Width -ne $lastSize.Width -or $currentSize.Height -ne $lastSize.Height) {
+                Write-Log "Desktop resized: $($lastSize.Width)x$($lastSize.Height) -> $($currentSize.Width)x$($currentSize.Height) -- restarting ffmpeg"
+
+                # Stop current ffmpeg gracefully
+                Stop-Process -Id $ffmpegProcess.Id -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 1
+
+                # Count existing segments to set start_number correctly
+                $existingSegs = @(Get-ChildItem -Path $recordingDir -Filter "segment_*.ts" -ErrorAction SilentlyContinue)
+                $script:ffmpegSegCounter = $existingSegs.Count
+
+                # Restart at new resolution
+                $ffmpegProcess = Start-Ffmpeg -RecDir $recordingDir -FfmpegPath $ffmpegPath -SegCounter $script:ffmpegSegCounter
+                if ($ffmpegProcess) {
+                    $lastSize = $currentSize
+                    Write-Log "ffmpeg restarted (PID: $($ffmpegProcess.Id))"
+                } else {
+                    Write-Log "WARNING: ffmpeg failed to restart after resize"
+                    $ffmpegStarted = $false
+                }
+            }
+        }
+    }
 
     $mstscDuration = (Get-Date) - $mstscStart
     Write-Log "mstsc exited (code: $($mstscProcess.ExitCode), duration: $([math]::Round($mstscDuration.TotalSeconds, 1))s)"
