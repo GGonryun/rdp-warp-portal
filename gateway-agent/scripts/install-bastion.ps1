@@ -433,6 +433,17 @@ if ($Uninstall) {
     Remove-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -Force -ErrorAction SilentlyContinue
     Write-Host "  Removed HKLM Run key (GatewayLauncher)" -ForegroundColor Green
 
+    # --- Restore built-in credential providers and remove P0rtal provider ---
+    # Remove the ExcludedCredentialProviders policy so all built-in providers reappear
+    $credPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    Remove-ItemProperty -Path $credPolPath -Name "ExcludedCredentialProviders" -Force -ErrorAction SilentlyContinue
+    # Unregister P0rtal credential provider
+    $credProvDll = "$InstallDir\bin\PinCredentialProvider.dll"
+    if (Test-Path $credProvDll) {
+        & regsvr32.exe /u /s $credProvDll 2>$null
+    }
+    Write-Host "  Restored built-in credential providers, unregistered P0rtal provider" -ForegroundColor Green
+
     # --- Remove RemoteApp allowlist (legacy) ---
     $tsAppPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
     Remove-ItemProperty -Path $tsAppPath -Name "fDisabledAllowList" -Force -ErrorAction SilentlyContinue
@@ -904,6 +915,28 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     # TermService restart is deferred to the end of the script so all
     # registry and configuration changes are applied first.
     $needsTermServiceRestart = $true
+
+    # Hide built-in credential providers from the logon screen so only the
+    # P0rtal PIN tile is visible. Uses ExcludedCredentialProviders Group Policy
+    # which hides providers from the interactive logon UI but does NOT block
+    # them for RDP/NLA authentication — so admins can still RDP in with password.
+    $excludedProviders = @(
+        "{60b78e88-ead8-445c-9cfd-0b87f74ea6cd}"  # PasswordProvider
+        "{cb82ea12-9f71-446d-89e1-8d0924e1256e}"  # PINLogonProvider
+        "{F8A1793B-7873-4046-B2A7-1F318747F427}"  # SmartCardCredentialProvider
+        "{8FD7E19C-3BF7-489B-A72C-846AB3678C96}"  # SmartCardPinProvider
+        "{BEC09223-B018-416D-A0AC-523971B639F5}"  # WinBio (fingerprint)
+        "{8AF662BF-65A0-4D0A-A540-A338A999D36F}"  # FaceCredentialProvider
+        "{27FBDB57-B613-4AF2-9D7E-4FA7A66C21AD}"  # CertCredProvider
+        "{D6886603-9D2F-4EB2-B667-1971041FA96B}"  # NGC (Windows Hello)
+        "{C5D7540A-CD51-453B-B22B-05305BA03F07}"  # Cloud Experience Provider
+        "{F8A0B131-5F68-486c-8040-7E8FC3C85BB6}"  # WLIDCredentialProvider (MS Account)
+    )
+    $credPolPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    if (-not (Test-Path $credPolPath)) { New-Item -Path $credPolPath -Force | Out-Null }
+    Set-ItemProperty -Path $credPolPath -Name "ExcludedCredentialProviders" `
+        -Value ($excludedProviders -join ";") -Type String -Force
+    Write-Host "  Hidden built-in credential providers from logon screen (admin RDP still works)" -ForegroundColor Green
 }
 
 # --- RDS Security: RDP Security Layer (no NLA) ---
