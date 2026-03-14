@@ -1472,22 +1472,24 @@ if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential pro
 
         if ($isNative) {
             # Check if source code has changed since last build by comparing
-            # a hash of the embedded source against the stored hash.
-            $currentHash = (Get-FileHash -InputStream (
-                [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($PSCommandPath))
-            ) -Algorithm SHA256).Hash
+            # a hash of the installer script content against the stored hash.
+            $currentHash = (Get-FileHash -Path $PSCommandPath -Algorithm SHA256).Hash
             $storedHash = if (Test-Path $sourceHashFile) { Get-Content $sourceHashFile -ErrorAction SilentlyContinue } else { "" }
 
             if ($currentHash -ne $storedHash) {
                 Write-Host "  Source code changed since last build -- rebuilding" -ForegroundColor Yellow
             } else {
+                # Verify both credential provider AND COM InprocServer32 keys exist
                 $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
-                if (-not (Test-Path $cpRegPath)) {
-                    Write-Host "  Native DLL exists but not registered -- registering now" -ForegroundColor Yellow
+                $clsidPath = "HKLM:\SOFTWARE\Classes\CLSID\$credProvGuid\InprocServer32"
+                if (-not (Test-Path $cpRegPath) -or -not (Test-Path $clsidPath)) {
+                    Write-Host "  Native DLL exists but registration incomplete -- re-registering" -ForegroundColor Yellow
                     & regsvr32.exe /s $credProvDll
-                    New-Item -Path $cpRegPath -Force | Out-Null
-                    Set-ItemProperty -Path $cpRegPath -Name "(Default)" -Value "P0rtal PIN Credential Provider"
-                    Write-Host "  PIN credential provider registered" -ForegroundColor Green
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "  PIN credential provider registered via regsvr32" -ForegroundColor Green
+                    } else {
+                        Write-Host "  WARNING: regsvr32 returned exit code $LASTEXITCODE" -ForegroundColor Yellow
+                    }
                 } else {
                     Write-Host "  Native DLL up to date and registered -- skipping" -ForegroundColor Green
                 }
