@@ -1442,6 +1442,56 @@ $credProvDll  = "$InstallDir\bin\PinCredentialProvider.dll"
 
 if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential provider")) {
 
+    # ---- Release any existing DLL lock ----
+    if (Test-Path $credProvDll) {
+        Write-Host "  Releasing existing DLL..." -ForegroundColor Gray
+
+        # Unregister old COM registration (regsvr32 for native, RegAsm for .NET)
+        & regsvr32.exe /u /s $credProvDll 2>$null
+        $regasmPath = Join-Path $env:windir "Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
+        if (Test-Path $regasmPath) {
+            & $regasmPath $credProvDll /unregister /silent 2>$null
+        }
+
+        # Find and kill any process still holding the DLL
+        $dllFullPath = (Resolve-Path $credProvDll).Path
+        $lockingPids = @()
+        try {
+            # Use handle.exe if available, otherwise try tasklist /m
+            $taskOutput = & tasklist.exe /m PinCredentialProvider.dll /fo csv /nh 2>$null
+            if ($taskOutput) {
+                $taskOutput | ForEach-Object {
+                    if ($_ -match '^"([^"]+)","(\d+)"') {
+                        $lockingPids += [int]$Matches[2]
+                    }
+                }
+            }
+        } catch {}
+
+        foreach ($pid in $lockingPids) {
+            Write-Host "  Stopping process $pid that holds PinCredentialProvider.dll..." -ForegroundColor Yellow
+            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+        }
+
+        # Retry: force-delete the old DLL
+        for ($i = 0; $i -lt 3; $i++) {
+            try {
+                Remove-Item $credProvDll -Force -ErrorAction Stop
+                Write-Host "  Old DLL removed" -ForegroundColor Green
+                break
+            } catch {
+                if ($i -lt 2) {
+                    Write-Host "  DLL still locked, retrying in 2s..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 2
+                } else {
+                    Write-Host "  WARNING: Could not remove old DLL: $_" -ForegroundColor Yellow
+                    Write-Host "  Try rebooting and re-running the installer" -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+
     # ---- Locate or install MSVC Build Tools ----
     $clExe = $null
 
