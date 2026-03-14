@@ -1516,12 +1516,8 @@ if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential pro
             Remove-Item -Path $clsidPath -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        # Unregister old COM (regsvr32 for native, RegAsm for .NET)
+        # Unregister old COM (native DLL via regsvr32)
         & regsvr32.exe /u /s $credProvDll 2>$null
-        $regasmPath = Join-Path $env:windir "Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
-        if (Test-Path $regasmPath) {
-            & $regasmPath $credProvDll /unregister /silent 2>$null
-        }
 
         # Try to delete the old DLL
         $removed = $false
