@@ -34,14 +34,14 @@
             font-size: 14px;
             margin-bottom: 32px;
         }
-        .token-label {
+        .pin-label {
             color: #888;
             font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 1.5px;
             margin-bottom: 12px;
         }
-        .token {
+        .pin {
             font-family: 'SF Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
             font-size: 48px;
             font-weight: 700;
@@ -57,10 +57,10 @@
             margin-bottom: 8px;
             transition: border-color 0.2s;
         }
-        .token:hover {
+        .pin:hover {
             border-color: #2563eb;
         }
-        .token:active {
+        .pin:active {
             border-color: #3b82f6;
         }
         .copied-msg {
@@ -147,8 +147,8 @@
         <div class="target-name">{{.TargetName}}</div>
         <div class="target-host">{{.TargetHost}}</div>
 
-        <div class="token-label">Session Token</div>
-        <div class="token" id="token" onclick="copyToken()">{{.Token}}</div>
+        <div class="pin-label">Session PIN</div>
+        <div class="pin" id="pin" onclick="copyPin()">{{.Token}}</div>
         <div class="copied-msg" id="copiedMsg">&nbsp;</div>
 
         <a href="{{.RDPFileURL}}" class="download-btn" id="downloadBtn">
@@ -158,7 +158,7 @@
         <div class="steps">
             <div><span class="num">1</span>Click the button above to download the .rdp file</div>
             <div><span class="num">2</span>Open the downloaded file</div>
-            <div><span class="num">3</span>When prompted for password, paste the token above</div>
+            <div><span class="num">3</span>When prompted for password, paste the PIN above</div>
         </div>
 
         <div class="status-bar" id="statusBar"></div>
@@ -173,7 +173,7 @@
     </div>
 
     <script>
-        const token = '{{.Token}}';
+        const pin = '{{.Token}}';
         const statusUrl = '{{.StatusURL}}';
         const copiedMsg = document.getElementById('copiedMsg');
         const statusBar = document.getElementById('statusBar');
@@ -182,18 +182,18 @@
 
         window.addEventListener('load', function() {
             if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(token).then(function() {
+                navigator.clipboard.writeText(pin).then(function() {
                     showCopied();
                 }).catch(function() {});
             }
         });
 
-        function copyToken() {
+        function copyPin() {
             if (navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(token).then(showCopied);
+                navigator.clipboard.writeText(pin).then(showCopied);
             } else {
                 var textarea = document.createElement('textarea');
-                textarea.value = token;
+                textarea.value = pin;
                 textarea.style.position = 'fixed';
                 textarea.style.opacity = '0';
                 document.body.appendChild(textarea);
@@ -205,7 +205,7 @@
         }
 
         function showCopied() {
-            copiedMsg.textContent = 'Copied to clipboard';
+            copiedMsg.textContent = 'PIN copied to clipboard';
             setTimeout(function() {
                 copiedMsg.innerHTML = '&nbsp;';
             }, 3000);

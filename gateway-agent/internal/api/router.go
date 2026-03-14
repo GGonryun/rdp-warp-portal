@@ -58,6 +58,7 @@ func NewRouter(mgr *session.Manager, credStore *credentials.Store, cfg *config.C
 
 	// --- Internal callback routes ---
 	r.Post("/internal/sessions/{session_id}/status", s.handleInternalStatus)
+	r.Post("/internal/auth/resolve-pin", s.handleResolvePin)
 
 	return r
 }

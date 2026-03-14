@@ -77,12 +77,9 @@ func (p *UserPool) Acquire(sessionID string) (username string, password string, 
 		return "", "", fmt.Errorf("user pool exhausted: all %d users are in use", len(p.users))
 	}
 
-	token := generateSessionToken()
-	// The 6-char token alone (uppercase+digits) won't satisfy Windows
-	// password complexity (requires 3 of 4 categories + min length).
-	// Append a fixed suffix so the actual password meets policy.
-	// The user sees and types the full string as their session token.
-	pwd := token + tokenSuffix
+	// Generate a numeric PIN. Windows password complexity must be disabled
+	// on the bastion (see install-bastion.ps1) for this to work.
+	pwd := generateSessionToken()
 
 	if err := setWindowsUserPassword(found, pwd); err != nil {
 		return "", "", fmt.Errorf("reset password for %s: %w", found, err)
@@ -122,16 +119,10 @@ func (p *UserPool) InUse() int {
 	return len(p.inUse)
 }
 
-const tokenCharset = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+const tokenCharset = "0123456789"
 const tokenLength = 6
 
-// tokenSuffix is appended to every generated token so the resulting
-// password satisfies Windows complexity rules (uppercase + lowercase +
-// digit + symbol, minimum 8 chars). The user types the full string.
-const tokenSuffix = "!gw0"
-
-// generateSessionToken produces a 6-character uppercase alphanumeric token
-// using crypto/rand. Ambiguous characters (0/O, 1/I/L) are excluded.
+// generateSessionToken produces a 6-digit numeric PIN using crypto/rand.
 func generateSessionToken() string {
 	b := make([]byte, tokenLength)
 	for i := range b {

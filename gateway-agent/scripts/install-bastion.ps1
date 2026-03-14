@@ -712,6 +712,21 @@ if ($PSCmdlet.ShouldProcess("System PATH", "Add $ffmpegDir")) {
 # ------------------------------------------------------------------
 Write-Host "[8/13] Creating session user accounts..." -ForegroundColor Yellow
 
+# Disable Windows password complexity so the Go agent can set numeric
+# PINs as session passwords. These are ephemeral single-use credentials
+# that get rotated after first connect, so complexity adds no value.
+Write-Host "  Disabling password complexity policy for PIN-based auth..." -ForegroundColor Cyan
+$secCfg = "$env:TEMP\secpol-export.cfg"
+secedit /export /cfg $secCfg /quiet
+(Get-Content $secCfg) `
+    -replace 'PasswordComplexity\s*=\s*1', 'PasswordComplexity = 0' `
+    -replace 'MinimumPasswordLength\s*=\s*\d+', 'MinimumPasswordLength = 4' |
+    Set-Content $secCfg
+secedit /configure /db "$env:TEMP\secpol-pin.sdb" /cfg $secCfg /areas SECURITYPOLICY /quiet
+Remove-Item $secCfg -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:TEMP\secpol-pin.sdb" -Force -ErrorAction SilentlyContinue
+Write-Host "  Password complexity disabled, minimum length set to 4" -ForegroundColor Green
+
 # These are local accounts that RDS sessions run under.
 # Each concurrent session uses a different account to maintain isolation.
 for ($i = 1; $i -le $SessionUserCount; $i++) {
@@ -1427,6 +1442,430 @@ $routerPath = "$InstallDir\scripts\session-router.ps1"
 if (Test-Path $routerPath) {
     Remove-Item $routerPath -Force -ErrorAction SilentlyContinue
     Write-Host "  Removed legacy session-router.ps1" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------------
+# Step 8b: Build & Deploy PIN Credential Provider (C#)
+# ------------------------------------------------------------------
+Write-Host "[11b/13] Building PIN credential provider..." -ForegroundColor Yellow
+
+$credProvGuid = "{E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C}"
+$credProvDll  = "$InstallDir\bin\PinCredentialProvider.dll"
+
+if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential provider")) {
+
+    # Write C# source to a temp file — compiled with csc.exe which ships
+    # with .NET Framework on every Windows Server (no Visual Studio needed).
+    $csSource = @'
+using System;
+using System.IO;
+using System.Net;
+using System.Runtime.InteropServices;
+using System.Text;
+
+[assembly: Guid("A1B2C3D4-E5F6-7890-ABCD-000000000001")]
+
+namespace P0rtalCredProv
+{
+    // ======================== Enums ========================
+
+    public enum CPUS : uint { INVALID=0, LOGON=1, UNLOCK=2, CHANGE_PASSWORD=3, CREDUI=4 }
+    public enum CPFT : uint { INVALID=0, LARGE_TEXT=1, SMALL_TEXT=2, COMMAND_LINK=3,
+        EDIT_TEXT=4, PASSWORD_TEXT=5, TILE_IMAGE=6, CHECKBOX=7, COMBOBOX=8, SUBMIT_BUTTON=9 }
+    public enum CPFS : uint { HIDDEN=0, DISPLAY_IN_SELECTED_TILE=1, DISPLAY_IN_DESELECTED_TILE=2, DISPLAY_IN_BOTH=3 }
+    public enum CPFIS : uint { NONE=0, READONLY=1, DISABLED=2, FOCUSED=3 }
+    public enum CPGSR : uint { NO_CREDENTIAL_NOT_FINISHED=0, RETURN_CREDENTIAL_FINISHED=1, RETURN_NO_CREDENTIAL_FINISHED=2 }
+    public enum CPSI : uint { NONE=0, ERROR=1, WARNING=2, SUCCESS=3 }
+
+    // ======================== Structs ========================
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CPFD
+    {
+        public uint dwFieldID;
+        public CPFT cpft;
+        public IntPtr pszLabel;
+        public Guid guidFieldType;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CPCS
+    {
+        public uint ulAuthenticationPackage;
+        public Guid clsidCredentialProvider;
+        public uint cbSerialization;
+        public IntPtr rgbSerialization;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct LSA_STRING
+    {
+        public ushort Length;
+        public ushort MaximumLength;
+        public IntPtr Buffer;
+    }
+
+    // ======================== COM Interfaces ========================
+
+    // Consumed — we receive this from LogonUI and call methods on it.
+    [ComImport, Guid("FA6FA76B-66B7-4B11-95F1-86171118E816")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProviderCredentialEvents
+    {
+        [PreserveSig] int SetFieldState(ICredentialProviderCredential pcpc, uint dwFieldID, CPFS cpfs);
+        [PreserveSig] int SetFieldInteractiveState(ICredentialProviderCredential pcpc, uint dwFieldID, CPFIS cpfis);
+        [PreserveSig] int SetFieldString(ICredentialProviderCredential pcpc, uint dwFieldID, [MarshalAs(UnmanagedType.LPWStr)] string psz);
+        [PreserveSig] int SetFieldCheckbox(ICredentialProviderCredential pcpc, uint dwFieldID, int bChecked, [MarshalAs(UnmanagedType.LPWStr)] string pszLabel);
+        [PreserveSig] int SetFieldBitmap(ICredentialProviderCredential pcpc, uint dwFieldID, IntPtr hbmp);
+        [PreserveSig] int SetFieldComboBoxSelectedItem(ICredentialProviderCredential pcpc, uint dwFieldID, uint dwSelectedItem);
+        [PreserveSig] int DeleteFieldComboBoxItem(ICredentialProviderCredential pcpc, uint dwFieldID, uint dwItem);
+        [PreserveSig] int AppendFieldComboBoxItem(ICredentialProviderCredential pcpc, uint dwFieldID, [MarshalAs(UnmanagedType.LPWStr)] string pszItem);
+        [PreserveSig] int SetFieldSubmitButton(ICredentialProviderCredential pcpc, uint dwFieldID, uint dwAdjacentTo);
+        [PreserveSig] int OnCreatingWindow(out IntPtr phwndOwner);
+    }
+
+    // Consumed — we receive this from LogonUI.
+    [ComImport, Guid("34201E5A-A787-41A3-A5A4-BD6DCF2A854E")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProviderEvents
+    {
+        [PreserveSig] int CredentialsChanged(IntPtr upAdviseContext);
+    }
+
+    // Implemented by us — LogonUI calls these methods on our provider.
+    [Guid("D27C644E-9B73-4964-B94F-4575E392AB71")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProvider
+    {
+        [PreserveSig] int SetUsageScenario(CPUS cpus, uint dwFlags);
+        [PreserveSig] int SetSerialization(ref CPCS pcpcs);
+        [PreserveSig] int Advise(ICredentialProviderEvents pcpe, IntPtr upAdviseContext);
+        [PreserveSig] int UnAdvise();
+        [PreserveSig] int GetFieldDescriptorCount(out uint pdwCount);
+        [PreserveSig] int GetFieldDescriptorAt(uint dwIndex, out IntPtr ppcpfd);
+        [PreserveSig] int GetCredentialCount(out uint pdwCount, out uint pdwDefault, out int pbAutoLogon);
+        [PreserveSig] int GetCredentialAt(uint dwIndex, out ICredentialProviderCredential ppcpc);
+    }
+
+    // Implemented by us — LogonUI calls these methods on our credential tile.
+    [Guid("63913A93-40C1-481A-818D-4072FF8C70CC")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface ICredentialProviderCredential
+    {
+        [PreserveSig] int Advise(ICredentialProviderCredentialEvents pcpce);
+        [PreserveSig] int UnAdvise();
+        [PreserveSig] int SetSelected(out int pbAutoLogon);
+        [PreserveSig] int SetDeselected();
+        [PreserveSig] int GetFieldState(uint dwFieldID, out CPFS pcpfs, out CPFIS pcpfis);
+        [PreserveSig] int GetStringValue(uint dwFieldID, out IntPtr ppsz);
+        [PreserveSig] int GetBitmapValue(uint dwFieldID, out IntPtr phbmp);
+        [PreserveSig] int GetCheckboxValue(uint dwFieldID, out int pbChecked, out IntPtr ppszLabel);
+        [PreserveSig] int GetComboBoxValueCount(uint dwFieldID, out uint pcItems, out uint pdwSelectedItem);
+        [PreserveSig] int GetComboBoxValueAt(uint dwFieldID, uint dwItem, out IntPtr ppszItem);
+        [PreserveSig] int GetSubmitButtonValue(uint dwFieldID, out uint pdwAdjacentTo);
+        [PreserveSig] int SetStringValue(uint dwFieldID, [MarshalAs(UnmanagedType.LPWStr)] string psz);
+        [PreserveSig] int SetCheckboxValue(uint dwFieldID, int bChecked);
+        [PreserveSig] int SetComboBoxSelectedValue(uint dwFieldID, uint dwSelectedItem);
+        [PreserveSig] int CommandLinkClicked(uint dwFieldID);
+        [PreserveSig] int GetSerialization(out CPGSR pcpgsr, out CPCS pcpcs, out IntPtr ppszOptionalStatusText, out CPSI pcpsiOptionalStatusIcon);
+        [PreserveSig] int ReportResult(int ntsStatus, int ntsSubstatus, out IntPtr ppszOptionalStatusText, out CPSI pcpsiOptionalStatusIcon);
+    }
+
+    // ======================== Provider ========================
+
+    [ComVisible(true)]
+    [Guid("E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C")]
+    [ClassInterface(ClassInterfaceType.None)]
+    public class PinProvider : ICredentialProvider
+    {
+        const int S_OK = 0;
+        const int E_NOTIMPL = unchecked((int)0x80004001);
+        const int E_INVALIDARG = unchecked((int)0x80070057);
+
+        static readonly CPFT[] FTypes  = { CPFT.LARGE_TEXT, CPFT.PASSWORD_TEXT, CPFT.SUBMIT_BUTTON, CPFT.SMALL_TEXT };
+        static readonly string[] FLabels = { "P0rtal Gateway", "PIN", "Connect", "" };
+
+        PinCredential _cred;
+
+        public int SetUsageScenario(CPUS cpus, uint dwFlags)
+        {
+            if (cpus == CPUS.LOGON || cpus == CPUS.UNLOCK || cpus == CPUS.CREDUI)
+            {
+                _cred = new PinCredential();
+                return S_OK;
+            }
+            return E_NOTIMPL;
+        }
+
+        public int SetSerialization(ref CPCS pcpcs) { return E_NOTIMPL; }
+        public int Advise(ICredentialProviderEvents pcpe, IntPtr ctx) { return S_OK; }
+        public int UnAdvise() { return S_OK; }
+
+        public int GetFieldDescriptorCount(out uint pdwCount)
+        {
+            pdwCount = 4;
+            return S_OK;
+        }
+
+        public int GetFieldDescriptorAt(uint idx, out IntPtr ppcpfd)
+        {
+            ppcpfd = IntPtr.Zero;
+            if (idx >= 4) return E_INVALIDARG;
+
+            CPFD fd = new CPFD();
+            fd.dwFieldID = idx;
+            fd.cpft = FTypes[idx];
+            fd.pszLabel = Marshal.StringToCoTaskMemUni(FLabels[idx]);
+            fd.guidFieldType = Guid.Empty;
+
+            ppcpfd = Marshal.AllocCoTaskMem(Marshal.SizeOf(typeof(CPFD)));
+            Marshal.StructureToPtr(fd, ppcpfd, false);
+            return S_OK;
+        }
+
+        public int GetCredentialCount(out uint pdwCount, out uint pdwDefault, out int pbAutoLogon)
+        {
+            pdwCount = 1; pdwDefault = 0; pbAutoLogon = 0;
+            return S_OK;
+        }
+
+        public int GetCredentialAt(uint dwIndex, out ICredentialProviderCredential ppcpc)
+        {
+            ppcpc = null;
+            if (dwIndex != 0) return E_INVALIDARG;
+            ppcpc = _cred;
+            return S_OK;
+        }
+    }
+
+    // ======================== Credential ========================
+
+    [ComVisible(true)]
+    [ClassInterface(ClassInterfaceType.None)]
+    public class PinCredential : ICredentialProviderCredential
+    {
+        const int S_OK = 0;
+        const int E_NOTIMPL = unchecked((int)0x80004001);
+        const int E_INVALIDARG = unchecked((int)0x80070057);
+
+        static readonly CPFS[]  FStates = { CPFS.DISPLAY_IN_SELECTED_TILE, CPFS.DISPLAY_IN_SELECTED_TILE, CPFS.DISPLAY_IN_SELECTED_TILE, CPFS.HIDDEN };
+        static readonly CPFIS[] FInter  = { CPFIS.NONE, CPFIS.FOCUSED, CPFIS.NONE, CPFIS.NONE };
+
+        string _pin = "";
+        ICredentialProviderCredentialEvents _events;
+
+        [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool CredPackAuthenticationBuffer(int dwFlags, string pszUserName, string pszPassword, IntPtr pPacked, ref int pcbPacked);
+
+        [DllImport("secur32.dll")]
+        static extern int LsaConnectUntrusted(out IntPtr lsaHandle);
+
+        [DllImport("secur32.dll")]
+        static extern int LsaLookupAuthenticationPackage(IntPtr lsaHandle, ref LSA_STRING packageName, out uint authPackage);
+
+        [DllImport("secur32.dll")]
+        static extern int LsaDeregisterLogonProcess(IntPtr lsaHandle);
+
+        public int Advise(ICredentialProviderCredentialEvents pcpce) { _events = pcpce; return S_OK; }
+        public int UnAdvise() { _events = null; return S_OK; }
+        public int SetSelected(out int pbAutoLogon) { pbAutoLogon = 0; return S_OK; }
+        public int SetDeselected() { _pin = ""; return S_OK; }
+
+        public int GetFieldState(uint id, out CPFS cpfs, out CPFIS cpfis)
+        {
+            cpfs = CPFS.HIDDEN; cpfis = CPFIS.NONE;
+            if (id >= 4) return E_INVALIDARG;
+            cpfs = FStates[id]; cpfis = FInter[id];
+            return S_OK;
+        }
+
+        public int GetStringValue(uint id, out IntPtr ppsz)
+        {
+            ppsz = IntPtr.Zero;
+            if (id == 0) { ppsz = Marshal.StringToCoTaskMemUni("P0rtal Gateway"); return S_OK; }
+            if (id == 1 || id == 3) { ppsz = Marshal.StringToCoTaskMemUni(""); return S_OK; }
+            return E_INVALIDARG;
+        }
+
+        public int GetBitmapValue(uint f, out IntPtr p)            { p = IntPtr.Zero; return E_NOTIMPL; }
+        public int GetCheckboxValue(uint f, out int c, out IntPtr l) { c = 0; l = IntPtr.Zero; return E_NOTIMPL; }
+        public int GetComboBoxValueCount(uint f, out uint c, out uint s) { c = 0; s = 0; return E_NOTIMPL; }
+        public int GetComboBoxValueAt(uint f, uint i, out IntPtr p) { p = IntPtr.Zero; return E_NOTIMPL; }
+        public int SetCheckboxValue(uint f, int c)                 { return E_NOTIMPL; }
+        public int SetComboBoxSelectedValue(uint f, uint s)        { return E_NOTIMPL; }
+        public int CommandLinkClicked(uint f)                      { return E_NOTIMPL; }
+
+        public int GetSubmitButtonValue(uint id, out uint pdwAdjacentTo)
+        {
+            pdwAdjacentTo = 1; // adjacent to PIN field
+            if (id != 2) return E_INVALIDARG;
+            return S_OK;
+        }
+
+        public int SetStringValue(uint id, string psz)
+        {
+            if (id == 1) { _pin = psz ?? ""; return S_OK; }
+            return E_INVALIDARG;
+        }
+
+        string ResolvePinToUsername(string pin)
+        {
+            try
+            {
+                using (WebClient wc = new WebClient())
+                {
+                    wc.Headers[HttpRequestHeader.ContentType] = "application/json";
+                    string resp = wc.UploadString(
+                        "http://localhost:8080/internal/auth/resolve-pin",
+                        "{\"pin\":\"" + pin + "\"}");
+                    int idx = resp.IndexOf("\"username\":\"");
+                    if (idx < 0) return null;
+                    idx += 12;
+                    int end = resp.IndexOf('"', idx);
+                    if (end < 0) return null;
+                    return resp.Substring(idx, end - idx);
+                }
+            }
+            catch { return null; }
+        }
+
+        uint GetNegotiatePackage()
+        {
+            IntPtr hLsa;
+            if (LsaConnectUntrusted(out hLsa) != 0) return 0;
+            byte[] nameBytes = Encoding.ASCII.GetBytes("Negotiate");
+            IntPtr namePtr = Marshal.AllocHGlobal(nameBytes.Length + 1);
+            Marshal.Copy(nameBytes, 0, namePtr, nameBytes.Length);
+            Marshal.WriteByte(namePtr, nameBytes.Length, 0);
+            LSA_STRING lsa = new LSA_STRING();
+            lsa.Length = (ushort)nameBytes.Length;
+            lsa.MaximumLength = (ushort)(nameBytes.Length + 1);
+            lsa.Buffer = namePtr;
+            uint pkg = 0;
+            LsaLookupAuthenticationPackage(hLsa, ref lsa, out pkg);
+            LsaDeregisterLogonProcess(hLsa);
+            Marshal.FreeHGlobal(namePtr);
+            return pkg;
+        }
+
+        public int GetSerialization(out CPGSR pcpgsr, out CPCS pcpcs, out IntPtr ppszStatus, out CPSI pcpsiIcon)
+        {
+            pcpgsr = CPGSR.NO_CREDENTIAL_NOT_FINISHED;
+            pcpcs = new CPCS();
+            ppszStatus = IntPtr.Zero;
+            pcpsiIcon = CPSI.NONE;
+
+            if (string.IsNullOrEmpty(_pin))
+            {
+                ppszStatus = Marshal.StringToCoTaskMemUni("Please enter your PIN");
+                pcpsiIcon = CPSI.ERROR;
+                return S_OK;
+            }
+
+            string username = ResolvePinToUsername(_pin);
+            if (username == null)
+            {
+                ppszStatus = Marshal.StringToCoTaskMemUni("Invalid PIN");
+                pcpsiIcon = CPSI.ERROR;
+                if (_events != null)
+                {
+                    _events.SetFieldState(this, 3, CPFS.DISPLAY_IN_SELECTED_TILE);
+                    _events.SetFieldString(this, 3, "Invalid PIN. Try again.");
+                }
+                return S_OK;
+            }
+
+            string qualifiedUser = ".\\" + username;
+            int cbBuf = 0;
+            CredPackAuthenticationBuffer(0, qualifiedUser, _pin, IntPtr.Zero, ref cbBuf);
+            IntPtr pbBuf = Marshal.AllocCoTaskMem(cbBuf);
+            if (!CredPackAuthenticationBuffer(0, qualifiedUser, _pin, pbBuf, ref cbBuf))
+            {
+                Marshal.FreeCoTaskMem(pbBuf);
+                return Marshal.GetHRForLastWin32Error();
+            }
+
+            pcpcs.clsidCredentialProvider = new Guid("E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C");
+            pcpcs.rgbSerialization = pbBuf;
+            pcpcs.cbSerialization = (uint)cbBuf;
+            pcpcs.ulAuthenticationPackage = GetNegotiatePackage();
+            pcpgsr = CPGSR.RETURN_CREDENTIAL_FINISHED;
+            _pin = "";
+            return S_OK;
+        }
+
+        public int ReportResult(int ntsStatus, int ntsSubstatus, out IntPtr ppszStatus, out CPSI pcpsiIcon)
+        {
+            ppszStatus = IntPtr.Zero;
+            pcpsiIcon = CPSI.NONE;
+            if (ntsStatus != 0)
+            {
+                ppszStatus = Marshal.StringToCoTaskMemUni("Invalid PIN. Please try again.");
+                pcpsiIcon = CPSI.ERROR;
+            }
+            return S_OK;
+        }
+    }
+}
+'@
+
+    $csFile = "$InstallDir\credprov\PinCredentialProvider.cs"
+    New-Item -ItemType Directory -Force -Path "$InstallDir\credprov" | Out-Null
+    $csSource | Out-File -Encoding UTF8 $csFile
+    Write-Host "  C# source written to $csFile" -ForegroundColor Green
+
+    # ---- Compile with csc.exe (.NET Framework — always available) ----
+    $cscPath = Join-Path $env:windir "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+    if (-not (Test-Path $cscPath)) {
+        # Fallback to 32-bit framework
+        $cscPath = Join-Path $env:windir "Microsoft.NET\Framework\v4.0.30319\csc.exe"
+    }
+
+    if (Test-Path $cscPath) {
+        Write-Host "  Compiling with $cscPath ..." -ForegroundColor Cyan
+        $compileArgs = @(
+            "/target:library",
+            "/out:$credProvDll",
+            "/optimize+",
+            "/nologo",
+            $csFile
+        )
+        $compileResult = & $cscPath @compileArgs 2>&1
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $credProvDll)) {
+            Write-Host "  Compiled PinCredentialProvider.dll successfully" -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: Compilation failed:" -ForegroundColor Yellow
+            $compileResult | ForEach-Object { Write-Host "    $_" -ForegroundColor Yellow }
+        }
+    } else {
+        Write-Host "  ERROR: csc.exe not found -- .NET Framework 4.x is required" -ForegroundColor Red
+    }
+
+    # ---- Register with RegAsm and add credential provider entry ----
+    if (Test-Path $credProvDll) {
+        $regasmPath = Join-Path $env:windir "Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
+        if (-not (Test-Path $regasmPath)) {
+            $regasmPath = Join-Path $env:windir "Microsoft.NET\Framework\v4.0.30319\RegAsm.exe"
+        }
+
+        if (Test-Path $regasmPath) {
+            Write-Host "  Registering COM assembly with RegAsm..." -ForegroundColor Cyan
+            & $regasmPath $credProvDll /codebase /silent 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  COM registration successful" -ForegroundColor Green
+            } else {
+                Write-Host "  WARNING: RegAsm returned exit code $LASTEXITCODE" -ForegroundColor Yellow
+            }
+        }
+
+        # Register as a Windows credential provider
+        $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
+        New-Item -Path $cpRegPath -Force | Out-Null
+        Set-ItemProperty -Path $cpRegPath -Name "(Default)" -Value "P0rtal PIN Credential Provider"
+
+        Write-Host "  PIN credential provider registered" -ForegroundColor Green
+        Write-Host "  Users will see a 'P0rtal Gateway' PIN tile on the logon screen" -ForegroundColor Green
+    }
 }
 
 # ------------------------------------------------------------------

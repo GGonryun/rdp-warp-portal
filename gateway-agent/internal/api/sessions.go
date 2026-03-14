@@ -186,6 +186,35 @@ func (s *Server) handleTerminateSession(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "terminated"})
 }
 
+// handleResolvePin is called by the custom credential provider running on the
+// gateway's logon screen. It resolves a 6-digit PIN to the matching gateway
+// session username so the credential provider can authenticate without the
+// user typing a username.
+func (s *Server) handleResolvePin(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Pin string `json:"pin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Pin == "" {
+		respondError(w, http.StatusBadRequest, "pin is required")
+		return
+	}
+
+	sess := s.mgr.FindSessionByPin(req.Pin)
+	if sess == nil {
+		respondError(w, http.StatusUnauthorized, "invalid pin")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"username": sess.GatewayUser,
+	})
+}
+
 // handleInternalStatus processes status callbacks from the PowerShell launch
 // script and updates the session accordingly.
 func (s *Server) handleInternalStatus(w http.ResponseWriter, r *http.Request) {

@@ -97,7 +97,7 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 		"full address:s:%s:3389\r\n"+
 			"username:s:%s\r\n"+
 			"authentication level:i:0\r\n"+
-			"prompt for credentials:i:1\r\n"+
+			"prompt for credentials:i:0\r\n"+
 			"enablecredsspsupport:i:0\r\n"+
 			"remoteapplicationmode:i:1\r\n"+
 			"remoteapplicationprogram:s:C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n"+

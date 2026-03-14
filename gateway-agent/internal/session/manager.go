@@ -515,6 +515,21 @@ func parseQwinsta(output string) []RDSSession {
 	return sessions
 }
 
+// FindSessionByPin returns the session whose GatewayPass matches the given
+// PIN, or nil if no match is found. Only sessions with a non-empty password
+// (i.e. not yet connected / rotated) are considered.
+func (m *Manager) FindSessionByPin(pin string) *Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, sess := range m.sessions {
+		if sess.GatewayPass != "" && sess.GatewayPass == pin {
+			return sess
+		}
+	}
+	return nil
+}
+
 // StartTime returns the time the manager was created, used for uptime
 // calculations in the health endpoint.
 func (m *Manager) StartTime() time.Time {
