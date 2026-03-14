@@ -1446,48 +1446,62 @@ if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential pro
     if (Test-Path $credProvDll) {
         Write-Host "  Releasing existing DLL..." -ForegroundColor Gray
 
-        # Unregister old COM registration (regsvr32 for native, RegAsm for .NET)
+        # Step 1: Remove credential provider registry key so LogonUI stops loading it
+        $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
+        if (Test-Path $cpRegPath) {
+            Remove-Item -Path $cpRegPath -Force -ErrorAction SilentlyContinue
+            Write-Host "  Removed credential provider registry entry" -ForegroundColor Gray
+        }
+
+        # Step 2: Remove COM CLSID registration
+        $clsidPath = "HKLM:\SOFTWARE\Classes\CLSID\$credProvGuid"
+        if (Test-Path $clsidPath) {
+            Remove-Item -Path $clsidPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        # Step 3: Unregister old COM (regsvr32 for native, RegAsm for .NET)
         & regsvr32.exe /u /s $credProvDll 2>$null
         $regasmPath = Join-Path $env:windir "Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
         if (Test-Path $regasmPath) {
             & $regasmPath $credProvDll /unregister /silent 2>$null
         }
 
-        # Find and kill any process still holding the DLL
-        $dllFullPath = (Resolve-Path $credProvDll).Path
-        $lockingPids = @()
+        # Step 4: Try to rename the locked DLL out of the way (rename often
+        # succeeds on locked files even when delete does not)
+        $oldDll = "$credProvDll.old"
+        Remove-Item $oldDll -Force -ErrorAction SilentlyContinue
+
+        $dllRemoved = $false
         try {
-            # Use handle.exe if available, otherwise try tasklist /m
-            $taskOutput = & tasklist.exe /m PinCredentialProvider.dll /fo csv /nh 2>$null
-            if ($taskOutput) {
-                $taskOutput | ForEach-Object {
-                    if ($_ -match '^"([^"]+)","(\d+)"') {
-                        $lockingPids += [int]$Matches[2]
-                    }
-                }
-            }
-        } catch {}
-
-        foreach ($pid in $lockingPids) {
-            Write-Host "  Stopping process $pid that holds PinCredentialProvider.dll..." -ForegroundColor Yellow
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 1
-        }
-
-        # Retry: force-delete the old DLL
-        for ($i = 0; $i -lt 3; $i++) {
+            Remove-Item $credProvDll -Force -ErrorAction Stop
+            $dllRemoved = $true
+            Write-Host "  Old DLL removed" -ForegroundColor Green
+        } catch {
             try {
-                Remove-Item $credProvDll -Force -ErrorAction Stop
-                Write-Host "  Old DLL removed" -ForegroundColor Green
-                break
+                [System.IO.File]::Move($credProvDll, $oldDll)
+                $dllRemoved = $true
+                Write-Host "  Old DLL renamed to PinCredentialProvider.dll.old" -ForegroundColor Green
+
+                # Schedule .old file for deletion on next reboot
+                Add-Content -Path "$env:windir\winsxs\pending.xml" -Value "" -ErrorAction SilentlyContinue
+                # Use MoveFileEx to delete on reboot
+                Add-Type -TypeDefinition @'
+                    using System;
+                    using System.Runtime.InteropServices;
+                    public class FileUtil {
+                        [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+                        public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+                        public const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
+                    }
+'@
+                [FileUtil]::MoveFileEx($oldDll, $null, [FileUtil]::MOVEFILE_DELAY_UNTIL_REBOOT) | Out-Null
             } catch {
-                if ($i -lt 2) {
-                    Write-Host "  DLL still locked, retrying in 2s..." -ForegroundColor Yellow
-                    Start-Sleep -Seconds 2
-                } else {
-                    Write-Host "  WARNING: Could not remove old DLL: $_" -ForegroundColor Yellow
-                    Write-Host "  Try rebooting and re-running the installer" -ForegroundColor Yellow
-                }
+                Write-Host "  WARNING: Could not remove or rename old DLL: $_" -ForegroundColor Yellow
+                Write-Host "  Compiling to temporary path, will replace on reboot..." -ForegroundColor Yellow
+                # Compile to temp path, schedule replacement on reboot
+                $credProvDllTemp = "$credProvDll.new"
+                $credProvDll = $credProvDllTemp
+                $needsRebootForCredProv = $true
             }
         }
     }
@@ -2176,6 +2190,26 @@ cl.exe /nologo /EHsc /W4 /O2 /LD /DUNICODE /D_UNICODE ^
 
             Write-Host "  PIN credential provider registered" -ForegroundColor Green
             Write-Host "  Users will see a 'P0rtal Gateway' PIN tile on the logon screen" -ForegroundColor Green
+
+            # If we compiled to a temp path because the original was locked,
+            # schedule the replacement for next reboot
+            if ($needsRebootForCredProv) {
+                $finalDll = "$InstallDir\bin\PinCredentialProvider.dll"
+                Add-Type -TypeDefinition @'
+                    using System;
+                    using System.Runtime.InteropServices;
+                    public class FileUtil2 {
+                        [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+                        public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+                        public const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
+                        public const int MOVEFILE_REPLACE_EXISTING = 0x1;
+                    }
+'@
+                [FileUtil2]::MoveFileEx($credProvDll, $finalDll,
+                    [FileUtil2]::MOVEFILE_DELAY_UNTIL_REBOOT -bor [FileUtil2]::MOVEFILE_REPLACE_EXISTING) | Out-Null
+                Write-Host "  New DLL scheduled to replace old on next reboot" -ForegroundColor Yellow
+                Write-Host "  ACTION REQUIRED: Reboot the server for the credential provider to take effect" -ForegroundColor Red
+            }
         }
     }
 }
