@@ -226,14 +226,24 @@ try {
     # ------------------------------------------------------------------
     $rdpFile = Join-Path $recordingDir "$sessionID.rdp"
 
+    # Detect actual bastion desktop size so the inner session matches the
+    # user's native screen (the outer RemoteApp auto-negotiates this).
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+    $primaryScreen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $rdpW = $primaryScreen.Width
+    $rdpH = $primaryScreen.Height
+    if ($rdpW -lt 800) { $rdpW = 1920 }
+    if ($rdpH -lt 600) { $rdpH = 1080 }
+    Write-Log "Bastion desktop detected: ${rdpW}x${rdpH}"
+
     $rdpContent = @"
 full address:s:${targetHost}:${targetPort}
 username:s:${fullUser}
 prompt for credentials:i:0
 authentication level:i:0
-screen mode id:i:1
-desktopwidth:i:1920
-desktopheight:i:1080
+screen mode id:i:2
+desktopwidth:i:${rdpW}
+desktopheight:i:${rdpH}
 dynamic resolution:i:1
 use multimon:i:0
 redirectclipboards:i:1
@@ -433,7 +443,7 @@ redirectwebauthn:i:0
     $mstscStart = Get-Date
 
     $mstscProcess = Start-Process -FilePath "mstsc.exe" `
-        -ArgumentList $rdpFile `
+        -ArgumentList $rdpFile, "/f" `
         -PassThru
 
     # Boost mstsc to AboveNormal priority — user-facing, latency-sensitive

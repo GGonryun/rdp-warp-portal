@@ -104,8 +104,6 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"remoteapplicationname:s:P0rtal Gateway\r\n"+
 			"remoteapplicationcmdline:s:-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File \"%s\" -ConfigPath \"%s\"\r\n"+
 			"disableremoteappcapscheck:i:1\r\n"+
-			"desktopwidth:i:1920\r\n"+
-			"desktopheight:i:1080\r\n"+
 			"redirectclipboards:i:1\r\n"+
 			"redirectdrives:i:0\r\n"+
 			"audiomode:i:0\r\n"+
