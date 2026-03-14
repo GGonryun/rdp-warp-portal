@@ -545,6 +545,7 @@ if (-not $rdsFeature.Installed) {
     Write-Host "  RDS Session Host already installed" -ForegroundColor Green
     $needsReboot = $false
 }
+$needsTermServiceRestart = $false
 
 # ------------------------------------------------------------------
 # Step 4: Install RD Gateway Role
@@ -884,22 +885,9 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsAppPath -Name "fDisabledAllowList" -Value 1 -Type DWord -Force
     Write-Host "  Enabled RemoteApp allow-all (TSAppAllowList\fDisabledAllowList=1)" -ForegroundColor Green
 
-    # Restart TermService so RemoteApp registry changes take effect immediately.
-    # This MUST succeed -- without it, RemoteApp connections will be refused.
-    Write-Host "  Restarting TermService to apply RemoteApp settings..." -ForegroundColor Gray
-    try {
-        Restart-Service -Name "TermService" -Force
-        Start-Sleep -Seconds 3  # Give TermService time to fully reinitialize
-        $tsSvc = Get-Service -Name "TermService"
-        if ($tsSvc.Status -ne "Running") {
-            throw "TermService is not running after restart (status: $($tsSvc.Status))"
-        }
-        Write-Host "  TermService restarted successfully (status: $($tsSvc.Status))" -ForegroundColor Green
-    } catch {
-        Write-Host "  WARNING: TermService restart failed: $_" -ForegroundColor Red
-        Write-Host "  RemoteApp will NOT work until TermService is restarted!" -ForegroundColor Red
-        Write-Host "  Try manually: Restart-Service -Name 'TermService' -Force" -ForegroundColor Yellow
-    }
+    # TermService restart is deferred to the end of the script so all
+    # registry and configuration changes are applied first.
+    $needsTermServiceRestart = $true
 }
 
 # --- RDS Security: RDP Security Layer (no NLA) ---
@@ -1467,6 +1455,25 @@ using System.Text;
 
 namespace P0rtalCredProv
 {
+    // ======================== Debug Logger ========================
+
+    internal static class DebugLog
+    {
+        static readonly string LogPath = @"C:\Gateway\logs\credprov.log";
+
+        internal static void Write(string msg)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(LogPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.AppendAllText(LogPath,
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + msg + "\r\n");
+            }
+            catch { }
+        }
+    }
+
     // ======================== Enums ========================
 
     public enum CPUS : uint { INVALID=0, LOGON=1, UNLOCK=2, CHANGE_PASSWORD=3, CREDUI=4 }
@@ -1589,6 +1596,7 @@ namespace P0rtalCredProv
 
         public int SetUsageScenario(CPUS cpus, uint dwFlags)
         {
+            DebugLog.Write("PinProvider.SetUsageScenario: cpus=" + cpus + " flags=" + dwFlags);
             if (cpus == CPUS.LOGON || cpus == CPUS.UNLOCK || cpus == CPUS.CREDUI)
             {
                 _cred = new PinCredential();
@@ -1625,6 +1633,7 @@ namespace P0rtalCredProv
 
         public int GetCredentialCount(out uint pdwCount, out uint pdwDefault, out int pbAutoLogon)
         {
+            DebugLog.Write("PinProvider.GetCredentialCount");
             pdwCount = 1; pdwDefault = 0; pbAutoLogon = 0;
             return S_OK;
         }
@@ -1750,6 +1759,7 @@ namespace P0rtalCredProv
 
         public int GetSerialization(out CPGSR pcpgsr, out CPCS pcpcs, out IntPtr ppszStatus, out CPSI pcpsiIcon)
         {
+            DebugLog.Write("PinCredential.GetSerialization: pin length=" + (_pin ?? "").Length);
             pcpgsr = CPGSR.NO_CREDENTIAL_NOT_FINISHED;
             pcpcs = new CPCS();
             ppszStatus = IntPtr.Zero;
@@ -1763,6 +1773,7 @@ namespace P0rtalCredProv
             }
 
             string username = ResolvePinToUsername(_pin);
+            DebugLog.Write("PinCredential.GetSerialization: resolved username=" + (username ?? "NULL"));
             if (username == null)
             {
                 ppszStatus = Marshal.StringToCoTaskMemUni("Invalid PIN");
@@ -1865,6 +1876,57 @@ namespace P0rtalCredProv
 
         Write-Host "  PIN credential provider registered" -ForegroundColor Green
         Write-Host "  Users will see a 'P0rtal Gateway' PIN tile on the logon screen" -ForegroundColor Green
+
+        # ---- Post-install verification ----
+        Write-Host "  Verifying credential provider registration..." -ForegroundColor Cyan
+
+        # Check 1: DLL exists
+        if (Test-Path $credProvDll) {
+            Write-Host "    [OK] DLL exists: $credProvDll" -ForegroundColor Green
+        } else {
+            Write-Host "    [FAIL] DLL not found: $credProvDll" -ForegroundColor Red
+        }
+
+        # Check 2: Credential provider registry key
+        $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
+        if (Test-Path $cpRegPath) {
+            Write-Host "    [OK] Credential provider registry key present" -ForegroundColor Green
+        } else {
+            Write-Host "    [FAIL] Credential provider registry key missing" -ForegroundColor Red
+        }
+
+        # Check 3: COM CLSID InprocServer32 (set by RegAsm)
+        $clsidPath = "HKLM:\SOFTWARE\Classes\CLSID\$credProvGuid\InprocServer32"
+        if (Test-Path $clsidPath) {
+            $inproc = Get-ItemProperty -Path $clsidPath -Name "(Default)" -ErrorAction SilentlyContinue
+            Write-Host "    [OK] COM InprocServer32: $($inproc.'(Default)')" -ForegroundColor Green
+        } else {
+            Write-Host "    [FAIL] COM CLSID\InprocServer32 not found -- RegAsm may have failed" -ForegroundColor Red
+            Write-Host "    Trying manual COM registration..." -ForegroundColor Yellow
+
+            # RegAsm might have registered under WOW6432Node or HKCU instead of HKLM.
+            # Force HKLM registration manually.
+            $clsidHKLM = "HKLM:\SOFTWARE\Classes\CLSID\$credProvGuid"
+            New-Item -Path "$clsidHKLM\InprocServer32" -Force | Out-Null
+            Set-ItemProperty -Path "$clsidHKLM\InprocServer32" -Name "(Default)" -Value "mscoree.dll"
+            Set-ItemProperty -Path "$clsidHKLM\InprocServer32" -Name "ThreadingModel" -Value "Both"
+            Set-ItemProperty -Path "$clsidHKLM\InprocServer32" -Name "Class" -Value "P0rtalCredProv.PinProvider"
+            Set-ItemProperty -Path "$clsidHKLM\InprocServer32" -Name "Assembly" -Value "PinCredentialProvider, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null"
+            Set-ItemProperty -Path "$clsidHKLM\InprocServer32" -Name "CodeBase" -Value "file:///$($credProvDll -replace '\\','/')"
+            Set-ItemProperty -Path "$clsidHKLM\InprocServer32" -Name "RuntimeVersion" -Value "v4.0.30319"
+            Write-Host "    [OK] Manual COM registration applied" -ForegroundColor Green
+        }
+
+        # Check 4: Try to instantiate the COM object
+        try {
+            $type = [Type]::GetTypeFromCLSID([Guid]$credProvGuid)
+            $obj = [Activator]::CreateInstance($type)
+            Write-Host "    [OK] COM object instantiated successfully" -ForegroundColor Green
+            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($obj) | Out-Null
+        } catch {
+            Write-Host "    [WARN] COM instantiation test failed: $_" -ForegroundColor Yellow
+            Write-Host "    This may still work from LogonUI -- check C:\Gateway\logs\credprov.log after next logon" -ForegroundColor Yellow
+        }
     }
 }
 
@@ -1986,5 +2048,26 @@ if ($WhatIfPreference) {
         Write-Host "  3. Deploy session-launch.ps1 to $InstallDir\scripts\" -ForegroundColor White
         Write-Host "  4. Start the agent: sc start GatewayAgent" -ForegroundColor White
         Write-Host "  5. Test: curl http://$(hostname):$AgentPort/health" -ForegroundColor White
+    }
+
+    # Restart TermService at the very end so all registry/config changes are
+    # applied before the service picks them up.
+    if ($needsTermServiceRestart) {
+        Write-Host ""
+        Write-Host "  TermService must be restarted for RemoteApp settings to take effect." -ForegroundColor Yellow
+        Read-Host "  Press Enter to restart TermService"
+        Write-Host "  Restarting TermService..." -ForegroundColor Gray
+        try {
+            Restart-Service -Name "TermService" -Force
+            Start-Sleep -Seconds 3
+            $tsSvc = Get-Service -Name "TermService"
+            if ($tsSvc.Status -ne "Running") {
+                throw "TermService is not running after restart (status: $($tsSvc.Status))"
+            }
+            Write-Host "  TermService restarted successfully (status: $($tsSvc.Status))" -ForegroundColor Green
+        } catch {
+            Write-Host "  WARNING: TermService restart failed: $_" -ForegroundColor Red
+            Write-Host "  Try manually: Restart-Service -Name 'TermService' -Force" -ForegroundColor Yellow
+        }
     }
 }
