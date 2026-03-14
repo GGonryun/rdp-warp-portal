@@ -160,10 +160,25 @@ const monitorHTML = `<!DOCTYPE html>
         if (data.expires_at)   lines.push("Expires: " + new Date(data.expires_at).toLocaleString());
         infoEl.innerHTML = lines.join("<br>");
 
-        // Switch to MP4 recording when session ends
+        // When session ends, reload the HLS playlist (now finalized as VOD)
         if (!sessionEnded && (st === "completed" || st === "terminated")) {
           sessionEnded = true;
-          switchToRecording();
+          document.getElementById("btn-terminate").style.display = "none";
+
+          // Reload the playlist after a short delay for finalization
+          setTimeout(function() {
+            if (hls) {
+              hls.stopLoad();
+              hls.loadSource(HLS_URL);
+              hls.startLoad();
+            } else {
+              video.src = HLS_URL;
+              video.load();
+            }
+            // Change "Jump to Live" to "Restart"
+            var btn = document.getElementById("btn-live");
+            btn.textContent = "Restart";
+          }, 2000);
         }
       })
       .catch(function() {
@@ -173,48 +188,6 @@ const monitorHTML = `<!DOCTYPE html>
   }
   fetchSessionInfo();
   setInterval(fetchSessionInfo, 5000);
-
-  // ---- Switch from HLS to MP4 recording ----
-  function switchToRecording() {
-    // Tear down HLS player
-    if (hls) { hls.destroy(); hls = null; }
-
-    // Hide the live-only controls
-    document.getElementById("btn-live").style.display = "none";
-    document.getElementById("btn-terminate").style.display = "none";
-
-    // Try loading the MP4 recording (may take a moment to finalize)
-    var recordingURL = BASE + "/recording";
-    var attempts = 0;
-    var maxAttempts = 15;
-
-    function tryLoadRecording() {
-      fetch(recordingURL, { method: "HEAD" })
-        .then(function(r) {
-          if (r.ok) {
-            video.src = recordingURL;
-            video.muted = false;
-            video.controls = true;
-            video.load();
-            showError(""); // clear any pending message
-            errorBox.style.display = "none";
-          } else if (++attempts < maxAttempts) {
-            showError("Finalizing recording… (" + attempts + "/" + maxAttempts + ")");
-            setTimeout(tryLoadRecording, 2000);
-          } else {
-            showError("Recording not available.");
-          }
-        })
-        .catch(function() {
-          if (++attempts < maxAttempts) {
-            setTimeout(tryLoadRecording, 2000);
-          } else {
-            showError("Recording not available.");
-          }
-        });
-    }
-    tryLoadRecording();
-  }
 
   // ---- HLS player ----
   function startHLS() {

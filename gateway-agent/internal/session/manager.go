@@ -228,14 +228,10 @@ func (m *Manager) CompleteSession(id string) error {
 	sess.EndedAt = &now
 	m.mu.Unlock()
 
-	// Finalize recording in the background so the caller is not blocked.
+	// Finalize the HLS playlist so it can be played back as a VOD.
 	go func() {
-		if err := recording.Finalize(id, m.cfg); err != nil {
-			log.Printf("session %s: recording finalize failed: %v", id, err)
-			return
-		}
-		if err := recording.CleanupHLSSegments(id, m.cfg); err != nil {
-			log.Printf("session %s: HLS cleanup failed: %v", id, err)
+		if err := recording.FinalizePlaylist(id, m.cfg); err != nil {
+			log.Printf("session %s: playlist finalize failed: %v", id, err)
 		}
 	}()
 
