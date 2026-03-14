@@ -1443,66 +1443,44 @@ $credProvDll  = "$InstallDir\bin\PinCredentialProvider.dll"
 if ($PSCmdlet.ShouldProcess($credProvDll, "Build and register PIN credential provider")) {
 
     # ---- Release any existing DLL lock ----
+    $needsRebootForCredProv = $false
+    $finalCredProvDll = $credProvDll
+
     if (Test-Path $credProvDll) {
         Write-Host "  Releasing existing DLL..." -ForegroundColor Gray
 
-        # Step 1: Remove credential provider registry key so LogonUI stops loading it
+        # Remove credential provider registry key so LogonUI stops loading it
         $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
         if (Test-Path $cpRegPath) {
             Remove-Item -Path $cpRegPath -Force -ErrorAction SilentlyContinue
             Write-Host "  Removed credential provider registry entry" -ForegroundColor Gray
         }
 
-        # Step 2: Remove COM CLSID registration
+        # Remove COM CLSID registration
         $clsidPath = "HKLM:\SOFTWARE\Classes\CLSID\$credProvGuid"
         if (Test-Path $clsidPath) {
             Remove-Item -Path $clsidPath -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        # Step 3: Unregister old COM (regsvr32 for native, RegAsm for .NET)
+        # Unregister old COM (regsvr32 for native, RegAsm for .NET)
         & regsvr32.exe /u /s $credProvDll 2>$null
         $regasmPath = Join-Path $env:windir "Microsoft.NET\Framework64\v4.0.30319\RegAsm.exe"
         if (Test-Path $regasmPath) {
             & $regasmPath $credProvDll /unregister /silent 2>$null
         }
 
-        # Step 4: Try to rename the locked DLL out of the way (rename often
-        # succeeds on locked files even when delete does not)
-        $oldDll = "$credProvDll.old"
-        Remove-Item $oldDll -Force -ErrorAction SilentlyContinue
-
-        $dllRemoved = $false
+        # Try to delete the old DLL
+        $removed = $false
         try {
             Remove-Item $credProvDll -Force -ErrorAction Stop
-            $dllRemoved = $true
+            $removed = $true
             Write-Host "  Old DLL removed" -ForegroundColor Green
         } catch {
-            try {
-                [System.IO.File]::Move($credProvDll, $oldDll)
-                $dllRemoved = $true
-                Write-Host "  Old DLL renamed to PinCredentialProvider.dll.old" -ForegroundColor Green
-
-                # Schedule .old file for deletion on next reboot
-                Add-Content -Path "$env:windir\winsxs\pending.xml" -Value "" -ErrorAction SilentlyContinue
-                # Use MoveFileEx to delete on reboot
-                Add-Type -TypeDefinition @'
-                    using System;
-                    using System.Runtime.InteropServices;
-                    public class FileUtil {
-                        [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
-                        public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
-                        public const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
-                    }
-'@
-                [FileUtil]::MoveFileEx($oldDll, $null, [FileUtil]::MOVEFILE_DELAY_UNTIL_REBOOT) | Out-Null
-            } catch {
-                Write-Host "  WARNING: Could not remove or rename old DLL: $_" -ForegroundColor Yellow
-                Write-Host "  Compiling to temporary path, will replace on reboot..." -ForegroundColor Yellow
-                # Compile to temp path, schedule replacement on reboot
-                $credProvDllTemp = "$credProvDll.new"
-                $credProvDll = $credProvDllTemp
-                $needsRebootForCredProv = $true
-            }
+            Write-Host "  Old DLL is locked (loaded by LogonUI) -- compiling to temp path" -ForegroundColor Yellow
+            # Compile to a temp name, schedule replacement on reboot
+            $credProvDll = "$finalCredProvDll.new"
+            Remove-Item $credProvDll -Force -ErrorAction SilentlyContinue
+            $needsRebootForCredProv = $true
         }
     }
 
@@ -2175,40 +2153,40 @@ cl.exe /nologo /EHsc /W4 /O2 /LD /DUNICODE /D_UNICODE ^
 
         # ---- Register with regsvr32 and add credential provider entry ----
         if (Test-Path $credProvDll) {
-            Write-Host "  Registering DLL with regsvr32..." -ForegroundColor Cyan
-            $regResult = & regsvr32.exe /s $credProvDll 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "  COM registration successful" -ForegroundColor Green
-            } else {
-                Write-Host "  WARNING: regsvr32 returned exit code $LASTEXITCODE" -ForegroundColor Yellow
-            }
-
-            # Register as a Windows credential provider
-            $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
-            New-Item -Path $cpRegPath -Force | Out-Null
-            Set-ItemProperty -Path $cpRegPath -Name "(Default)" -Value "P0rtal PIN Credential Provider"
-
-            Write-Host "  PIN credential provider registered" -ForegroundColor Green
-            Write-Host "  Users will see a 'P0rtal Gateway' PIN tile on the logon screen" -ForegroundColor Green
-
-            # If we compiled to a temp path because the original was locked,
-            # schedule the replacement for next reboot
             if ($needsRebootForCredProv) {
-                $finalDll = "$InstallDir\bin\PinCredentialProvider.dll"
+                # Compiled to .dll.new — schedule replacement on reboot
+                Write-Host "  Scheduling DLL replacement on next reboot..." -ForegroundColor Yellow
                 Add-Type -TypeDefinition @'
                     using System;
                     using System.Runtime.InteropServices;
-                    public class FileUtil2 {
+                    public class MoveFileUtil {
                         [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
                         public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
-                        public const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
-                        public const int MOVEFILE_REPLACE_EXISTING = 0x1;
                     }
 '@
-                [FileUtil2]::MoveFileEx($credProvDll, $finalDll,
-                    [FileUtil2]::MOVEFILE_DELAY_UNTIL_REBOOT -bor [FileUtil2]::MOVEFILE_REPLACE_EXISTING) | Out-Null
-                Write-Host "  New DLL scheduled to replace old on next reboot" -ForegroundColor Yellow
-                Write-Host "  ACTION REQUIRED: Reboot the server for the credential provider to take effect" -ForegroundColor Red
+                # First schedule old DLL for deletion
+                [MoveFileUtil]::MoveFileEx($finalCredProvDll, $null, 0x4) | Out-Null
+                # Then schedule new DLL to take its place
+                [MoveFileUtil]::MoveFileEx($credProvDll, $finalCredProvDll, 0x5) | Out-Null
+                Write-Host "  New native DLL will replace old .NET DLL on next reboot" -ForegroundColor Green
+                Write-Host "  ACTION REQUIRED: Reboot the server for the PIN credential provider to take effect" -ForegroundColor Red
+            } else {
+                # DLL is in final location — register it now
+                Write-Host "  Registering DLL with regsvr32..." -ForegroundColor Cyan
+                $regResult = & regsvr32.exe /s $credProvDll 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  COM registration successful" -ForegroundColor Green
+                } else {
+                    Write-Host "  WARNING: regsvr32 returned exit code $LASTEXITCODE" -ForegroundColor Yellow
+                }
+
+                # Register as a Windows credential provider
+                $cpRegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\$credProvGuid"
+                New-Item -Path $cpRegPath -Force | Out-Null
+                Set-ItemProperty -Path $cpRegPath -Name "(Default)" -Value "P0rtal PIN Credential Provider"
+
+                Write-Host "  PIN credential provider registered" -ForegroundColor Green
+                Write-Host "  Users will see a 'P0rtal Gateway' PIN tile on the logon screen" -ForegroundColor Green
             }
         }
     }
