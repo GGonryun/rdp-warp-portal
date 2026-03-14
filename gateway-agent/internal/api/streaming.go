@@ -174,8 +174,8 @@ const monitorHTML = `<!DOCTYPE html>
       return;
     }
     hls = new Hls({
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 6,
+      liveSyncDurationCount: 2,
+      liveMaxLatencyDurationCount: 4,
       enableWorker: true
     });
     hls.loadSource(HLS_URL);

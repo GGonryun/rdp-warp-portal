@@ -257,7 +257,7 @@ bandwidthautodetect:i:1
             "-crf", "23",
             "-pix_fmt", "yuv420p",
             "-f", "hls",
-            "-hls_time", "4",
+            "-hls_time", "1",
             "-hls_list_size", "0",
             "-hls_flags", "append_list+independent_segments",
             "-hls_segment_filename", (Join-Path $recordingDir "segment_%04d.ts"),
