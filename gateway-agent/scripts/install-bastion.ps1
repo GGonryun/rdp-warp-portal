@@ -872,8 +872,8 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsRegPath -Name "fNoRemoteDesktopWallpaper" -Value 1 -Type DWord -Force
     Write-Host "  Disabled wallpaper in RDS sessions" -ForegroundColor Green
 
-    # Enable UDP transport (reduces perceived input latency significantly)
-    Set-ItemProperty -Path $tsRegPath -Name "SelectTransport" -Value 0 -Type DWord -Force
+    # Force UDP-only transport (reduces perceived input latency significantly)
+    Set-ItemProperty -Path $tsRegPath -Name "SelectTransport" -Value 2 -Type DWord -Force
     # Open UDP port 3389 in firewall (required for RDP Shortpath)
     $udpRule = Get-NetFirewallRule -DisplayName "Gateway-RDP-UDP" -ErrorAction SilentlyContinue
     if (-not $udpRule) {
@@ -882,7 +882,7 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
             -Action Allow -Profile Any | Out-Null
         Write-Host "  Opened UDP 3389 in firewall" -ForegroundColor Green
     }
-    Write-Host "  Enabled UDP transport (SelectTransport=0)" -ForegroundColor Green
+    Write-Host "  Forced UDP-only transport (SelectTransport=2)" -ForegroundColor Green
 
     # Enable AVC 444 encoding (sharper image, less bandwidth)
     Set-ItemProperty -Path $tsRegPath -Name "AVC444ModePreferred" -Value 1 -Type DWord -Force
