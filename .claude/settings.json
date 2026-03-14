@@ -6,7 +6,8 @@
       "Read(//opt/homebrew/Cellar/go/1.25.6/libexec/bin/**)",
       "Bash(/opt/homebrew/bin/go build:*)",
       "Bash(export PATH=\"$HOME/go/bin:/usr/local/go/bin:$PATH\")",
-      "Read(//Users/miguelcampos/**)"
+      "Read(//Users/miguelcampos/**)",
+      "Bash(python3 -c \":*)"
     ]
   }
 }

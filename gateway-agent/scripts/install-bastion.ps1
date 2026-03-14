@@ -310,7 +310,7 @@ if ($Uninstall) {
                         }
                     }
                 } catch {
-                    # Ignore errors from query/logoff — user may not be logged in
+                    # Ignore errors from query/logoff -- user may not be logged in
                 }
                 Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
                 $usersRemoved++
@@ -861,7 +861,7 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
 
     # Enable RemoteApp: allow any program to be launched as a RemoteApp.
     # The RDP file specifies session-launch.ps1 as the RemoteApp program.
-    # This is how CyberArk PSM works — no desktop, no shell, just the app.
+    # This is how CyberArk PSM works -- no desktop, no shell, just the app.
     $tsAppPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
     if (-not (Test-Path $tsAppPath)) {
         New-Item -Path $tsAppPath -Force | Out-Null
@@ -870,7 +870,7 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Write-Host "  Enabled RemoteApp allow-all (TSAppAllowList\fDisabledAllowList=1)" -ForegroundColor Green
 
     # Restart TermService so RemoteApp registry changes take effect immediately.
-    # This MUST succeed — without it, RemoteApp connections will be refused.
+    # This MUST succeed -- without it, RemoteApp connections will be refused.
     Write-Host "  Restarting TermService to apply RemoteApp settings..." -ForegroundColor Gray
     try {
         Restart-Service -Name "TermService" -Force
@@ -1007,7 +1007,7 @@ param(
 )
 
 # ======================================================================
-# PRE-FLIGHT LOGGING — set up file logging BEFORE anything that could
+# PRE-FLIGHT LOGGING -- set up file logging BEFORE anything that could
 # fail, so we always have diagnostics even if the script crashes early.
 # This runs before $ErrorActionPreference = "Stop" intentionally.
 # ======================================================================
@@ -1031,7 +1031,7 @@ Write-Log "PowerShell: $($PSVersionTable.PSVersion) | OS: $([Environment]::OSVer
 $ErrorActionPreference = "Stop"
 
 # ======================================================================
-# Hide the PowerShell console window — user should only see mstsc.
+# Hide the PowerShell console window -- user should only see mstsc.
 # In RemoteApp mode each top-level window is remoted separately;
 # hiding this window means only the mstsc window appears on the client.
 # ======================================================================
@@ -1071,7 +1071,7 @@ function Send-StatusCallback {
 }
 
 # ======================================================================
-# State variables — declared up front so the finally block can reference them
+# State variables -- declared up front so the finally block can reference them
 # ======================================================================
 $credTarget     = $null
 $ffmpegProcess  = $null
@@ -1087,7 +1087,7 @@ $finalMp4       = $null
 # Register engine-exit handler for graceful shutdown on logoff signal
 # ======================================================================
 Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
-    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [session-launch] PowerShell.Exiting event received — cleaning up"
+    Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [session-launch] PowerShell.Exiting event received -- cleaning up"
 
     # Best-effort credential removal
     if ($credTarget) {
@@ -1109,7 +1109,7 @@ Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
 } | Out-Null
 
 # ======================================================================
-# Main logic — wrapped in try/finally so credential & temp cleanup is
+# Main logic -- wrapped in try/finally so credential & temp cleanup is
 # guaranteed even on forced termination or unhandled exceptions.
 # ======================================================================
 try {
@@ -1121,7 +1121,7 @@ try {
 
     if (-not (Test-Path $ConfigPath)) {
         Write-Log "ERROR: Config file not found: $ConfigPath"
-        # Cannot send callback without config — just exit
+        # Cannot send callback without config -- just exit
         exit 1
     }
 
@@ -1158,7 +1158,7 @@ try {
     $ffmpegPath   = $config.ffmpeg_path
     $callbackUrl  = $config.callback_url
 
-    Write-Log "Session $sessionID — target ${targetHost}:${targetPort} as ${targetUser}"
+    Write-Log "Session $sessionID -- target ${targetHost}:${targetPort} as ${targetUser}"
 
     # ------------------------------------------------------------------
     # Ensure recording directory exists
@@ -1265,11 +1265,11 @@ bandwidthautodetect:i:1
 
         # Check if ffmpeg crashed immediately
         if ($ffmpegProcess.HasExited) {
-            Write-Log "WARNING: ffmpeg exited early (code: $($ffmpegProcess.ExitCode)) — session will continue without recording"
+            Write-Log "WARNING: ffmpeg exited early (code: $($ffmpegProcess.ExitCode)) -- session will continue without recording"
             $ffmpegStarted = $false
         }
     } catch {
-        Write-Log "WARNING: Failed to start ffmpeg: $_ — session will continue without recording"
+        Write-Log "WARNING: Failed to start ffmpeg: $_ -- session will continue without recording"
         $ffmpegStarted = $false
     }
 
@@ -1303,7 +1303,7 @@ bandwidthautodetect:i:1
     }
 
     # ------------------------------------------------------------------
-    # Launch mstsc.exe — this blocks until the user closes it
+    # Launch mstsc.exe -- this blocks until the user closes it
     # ------------------------------------------------------------------
     Write-Log "Launching mstsc to $targetHost"
     $mstscStart = Get-Date
@@ -1312,7 +1312,7 @@ bandwidthautodetect:i:1
         -ArgumentList $rdpFile, "/f" `
         -PassThru
 
-    Write-Log "mstsc launched (PID: $($mstscProcess.Id)) — waiting for it to exit"
+    Write-Log "mstsc launched (PID: $($mstscProcess.Id)) -- waiting for it to exit"
 
     # Block until mstsc exits
     $mstscProcess.WaitForExit()
@@ -1321,14 +1321,14 @@ bandwidthautodetect:i:1
     Write-Log "mstsc exited (code: $($mstscProcess.ExitCode), duration: $([math]::Round($mstscDuration.TotalSeconds, 1))s)"
 
     # ------------------------------------------------------------------
-    # mstsc exited — logoff IMMEDIATELY so user never sees gateway desktop.
+    # mstsc exited -- logoff IMMEDIATELY so user never sees gateway desktop.
     # Send status callback first (fast), stop ffmpeg, clean credentials,
     # then logoff. MP4 concatenation is deferred to the Go agent service.
     # ------------------------------------------------------------------
 
     # Check for early exit indicating connection failure
     if ($mstscDuration.TotalSeconds -lt 10 -and $mstscProcess.ExitCode -ne 0) {
-        Write-Log "ERROR: mstsc exited within 10 seconds with code $($mstscProcess.ExitCode) — likely failed to connect to target"
+        Write-Log "ERROR: mstsc exited within 10 seconds with code $($mstscProcess.ExitCode) -- likely failed to connect to target"
         Send-StatusCallback -CallbackUrl $callbackUrl -SessionID $sessionID `
             -Body @{ status = "failed"; error = "mstsc connection failed (exit code $($mstscProcess.ExitCode))" }
         $sessionFailed = $true
@@ -1353,11 +1353,11 @@ bandwidthautodetect:i:1
         & cmdkey /delete:$credTarget 2>$null
     }
 
-    Write-Log "Session ended — logoff DISABLED for debugging (user stays on gateway desktop)"
+    Write-Log "Session ended -- logoff DISABLED for debugging (user stays on gateway desktop)"
 
 } catch {
     # ------------------------------------------------------------------
-    # Unhandled exception — report failure and re-throw details to log
+    # Unhandled exception -- report failure and re-throw details to log
     # ------------------------------------------------------------------
     Write-Log "FATAL: Unhandled exception: $_"
     Write-Log "Stack trace: $($_.ScriptStackTrace)"
@@ -1372,7 +1372,7 @@ bandwidthautodetect:i:1
 
 } finally {
     # ------------------------------------------------------------------
-    # GUARANTEED CLEANUP — runs even on forced termination
+    # GUARANTEED CLEANUP -- runs even on forced termination
     # ------------------------------------------------------------------
     Write-Log "Running cleanup (finally block)"
 
@@ -1411,7 +1411,7 @@ bandwidthautodetect:i:1
     Write-Log "Cleanup complete"
 }
 
-# Exit — this terminates the RDS session
+# Exit -- this terminates the RDS session
 if ($sessionFailed -or $LASTEXITCODE -eq 1) {
     exit 1
 }
