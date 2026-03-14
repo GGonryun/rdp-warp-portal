@@ -1808,6 +1808,53 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
 STDAPI DllCanUnloadNow() {
     return g_cRef == 0 ? S_OK : S_FALSE;
 }
+
+STDAPI DllRegisterServer() {
+    WCHAR dllPath[MAX_PATH];
+    GetModuleFileNameW(g_hModule, dllPath, MAX_PATH);
+
+    HKEY hKey = NULL;
+    LSTATUS ls = RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\Classes\\CLSID\\{E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C}",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (ls != ERROR_SUCCESS) return HRESULT_FROM_WIN32(ls);
+    RegSetValueExW(hKey, NULL, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(L"P0rtal PIN Credential Provider"),
+        sizeof(L"P0rtal PIN Credential Provider"));
+    RegCloseKey(hKey);
+
+    ls = RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\Classes\\CLSID\\{E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C}\\InprocServer32",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (ls != ERROR_SUCCESS) return HRESULT_FROM_WIN32(ls);
+    RegSetValueExW(hKey, NULL, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(dllPath),
+        static_cast<DWORD>((wcslen(dllPath) + 1) * sizeof(WCHAR)));
+    LPCWSTR threadModel = L"Apartment";
+    RegSetValueExW(hKey, L"ThreadingModel", 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(threadModel),
+        static_cast<DWORD>((wcslen(threadModel) + 1) * sizeof(WCHAR)));
+    RegCloseKey(hKey);
+
+    ls = RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C}",
+        0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+    if (ls != ERROR_SUCCESS) return HRESULT_FROM_WIN32(ls);
+    RegSetValueExW(hKey, NULL, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(L"P0rtal PIN Credential Provider"),
+        sizeof(L"P0rtal PIN Credential Provider"));
+    RegCloseKey(hKey);
+
+    return S_OK;
+}
+
+STDAPI DllUnregisterServer() {
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\Classes\\CLSID\\{E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C}");
+    RegDeleteTreeW(HKEY_LOCAL_MACHINE,
+        L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{E4A3C2B1-7D6F-4A8E-9C5B-1D2E3F4A5B6C}");
+    return S_OK;
+}
 '@ | Out-File -Encoding ASCII "$srcDir\dllmain.cpp"
 
         # provider.cpp
@@ -2157,8 +2204,10 @@ HRESULT CPinCredential::ReportResult(
         @'
 LIBRARY PinCredentialProvider
 EXPORTS
-    DllGetClassObject   PRIVATE
-    DllCanUnloadNow     PRIVATE
+    DllGetClassObject    PRIVATE
+    DllCanUnloadNow      PRIVATE
+    DllRegisterServer    PRIVATE
+    DllUnregisterServer  PRIVATE
 '@ | Out-File -Encoding ASCII "$InstallDir\credprov\PinCredentialProvider.def"
 
         Write-Host "  C++ source files written to $srcDir" -ForegroundColor Green
