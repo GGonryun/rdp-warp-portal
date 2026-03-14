@@ -861,6 +861,22 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsRegPath -Name "fNoRemoteDesktopWallpaper" -Value 1 -Type DWord -Force
     Write-Host "  Disabled wallpaper in RDS sessions" -ForegroundColor Green
 
+    # Enable UDP transport (reduces perceived input latency significantly)
+    Set-ItemProperty -Path $tsRegPath -Name "SelectTransport" -Value 0 -Type DWord -Force
+    Write-Host "  Enabled UDP transport (SelectTransport=0)" -ForegroundColor Green
+
+    # Enable RemoteFX / GPU acceleration for RDS sessions
+    Set-ItemProperty -Path $tsRegPath -Name "fEnableVirtualizedGraphics" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $tsRegPath -Name "bEnumerateHWBeforeSW" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $tsRegPath -Name "VisualExperiencePolicy" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $tsRegPath -Name "ColorDepth" -Value 5 -Type DWord -Force
+    Write-Host "  Enabled RemoteFX / GPU acceleration" -ForegroundColor Green
+
+    # Disable unnecessary visual overhead
+    Set-ItemProperty -Path $tsRegPath -Name "fDisableCursorBlinking" -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $tsRegPath -Name "fDisableAeroThemeEnabled" -Value 1 -Type DWord -Force
+    Write-Host "  Disabled cursor blinking and Aero theme in sessions" -ForegroundColor Green
+
     # Clean up legacy InitialProgram / fInheritInitialProgram values
     foreach ($legacyProp in @("fInheritInitialProgram", "InitialProgram", "WorkDirectory")) {
         Remove-ItemProperty -Path $tsRegPath -Name $legacyProp -ErrorAction SilentlyContinue

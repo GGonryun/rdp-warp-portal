@@ -231,9 +231,20 @@ redirectdrives:i:0
 audiomode:i:0
 audiocapturemode:i:0
 autoreconnection enabled:i:1
-connection type:i:7
-networkautodetect:i:1
-bandwidthautodetect:i:1
+connection type:i:6
+networkautodetect:i:0
+bandwidthautodetect:i:0
+compression:i:1
+videoplaybackmode:i:0
+disable wallpaper:i:1
+disable full window drag:i:1
+disable menu anims:i:1
+disable themes:i:0
+allow font smoothing:i:1
+redirectcomports:i:0
+redirectprinters:i:0
+redirectsmartcards:i:0
+redirectwebauthn:i:0
 "@
 
     $rdpContent | Out-File -Encoding ASCII $rdpFile
@@ -244,6 +255,58 @@ bandwidthautodetect:i:1
     # ------------------------------------------------------------------
     $ffmpegStarted = $false
     Add-Type -AssemblyName System.Windows.Forms
+
+    # Detect best available video encoder (hardware preferred, software fallback).
+    # Returns a hashtable with 'name' and 'args' keys.
+    function Get-BestEncoder {
+        param([string]$FfmpegPath)
+
+        # Check if an encoder is available by querying ffmpeg
+        function Test-Encoder {
+            param([string]$Encoder)
+            try {
+                $output = & $FfmpegPath -hide_banner -encoders 2>&1 | Out-String
+                return $output -match $Encoder
+            } catch { return $false }
+        }
+
+        # NVIDIA GPU
+        if (Test-Encoder "h264_nvenc") {
+            Write-Log "Hardware encoder detected: h264_nvenc"
+            return @{
+                name = "h264_nvenc"
+                args = @("-c:v", "h264_nvenc", "-preset", "p1", "-rc", "constqp", "-qp", "28")
+            }
+        }
+
+        # Intel QuickSync
+        if (Test-Encoder "h264_qsv") {
+            Write-Log "Hardware encoder detected: h264_qsv"
+            return @{
+                name = "h264_qsv"
+                args = @("-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "28")
+            }
+        }
+
+        # AMD AMF
+        if (Test-Encoder "h264_amf") {
+            Write-Log "Hardware encoder detected: h264_amf"
+            return @{
+                name = "h264_amf"
+                args = @("-c:v", "h264_amf", "-quality", "speed", "-qp_i", "28", "-qp_p", "28")
+            }
+        }
+
+        # Software fallback
+        Write-Log "No hardware encoder found, using libx264 software encoding"
+        return @{
+            name = "libx264"
+            args = @("-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "28", "-threads", "2")
+        }
+    }
+
+    $script:encoder = Get-BestEncoder -FfmpegPath $ffmpegPath
+    Write-Log "Selected encoder: $($script:encoder.name)"
 
     # Start-Ffmpeg: launches ffmpeg at the current desktop resolution.
     # Returns the process object or $null on failure.
@@ -257,25 +320,21 @@ bandwidthautodetect:i:1
             # Ensure even dimensions (x264 requires it)
             if ($w % 2 -ne 0) { $w-- }
             if ($h % 2 -ne 0) { $h-- }
-            Write-Log "Starting ffmpeg at ${w}x${h} (segment counter: $SegCounter)"
+            Write-Log "Starting ffmpeg at ${w}x${h} (segment counter: $SegCounter, encoder: $($script:encoder.name))"
 
             $args = @(
                 "-f", "gdigrab",
-                "-framerate", "5",
+                "-framerate", "10",
                 "-offset_x", "0",
                 "-offset_y", "0",
                 "-video_size", "${w}x${h}",
-                "-i", "desktop",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "zerolatency",
-                "-crf", "30",
-                "-maxrate", "500k",
-                "-bufsize", "1000k",
-                "-threads", "1",
+                "-i", "desktop"
+            )
+            $args += $script:encoder.args
+            $args += @(
                 "-pix_fmt", "yuv420p",
                 "-f", "hls",
-                "-hls_time", "8",
+                "-hls_time", "4",
                 "-hls_list_size", "0",
                 "-hls_flags", "append_list+independent_segments",
                 "-start_number", "$SegCounter",

@@ -112,6 +112,7 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"audiocapturemode:i:0\r\n"+
 			"use multimon:i:0\r\n"+
 			"autoreconnection enabled:i:1\r\n"+
+			"negotiate security layer:i:0\r\n"+
 			"connection type:i:7\r\n"+
 			"networkautodetect:i:1\r\n"+
 			"bandwidthautodetect:i:1\r\n"+
