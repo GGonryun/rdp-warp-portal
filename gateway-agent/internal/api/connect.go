@@ -106,8 +106,6 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"disableremoteappcapscheck:i:1\r\n"+
 			"desktopwidth:i:1920\r\n"+
 			"desktopheight:i:1080\r\n"+
-			"smart sizing:i:1\r\n"+
-			"dynamic resolution:i:1\r\n"+
 			"redirectclipboards:i:1\r\n"+
 			"redirectdrives:i:0\r\n"+
 			"audiomode:i:0\r\n"+

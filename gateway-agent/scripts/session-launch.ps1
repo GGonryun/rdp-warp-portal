@@ -234,7 +234,6 @@ authentication level:i:0
 screen mode id:i:1
 desktopwidth:i:1920
 desktopheight:i:1080
-smart sizing:i:1
 dynamic resolution:i:1
 use multimon:i:0
 redirectclipboards:i:1
