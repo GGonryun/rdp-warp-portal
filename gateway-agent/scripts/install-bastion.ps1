@@ -863,7 +863,7 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsRegPath -Name "MaxConnectionTime" -Value 28800000
     Write-Host "  Set max session time: 8 hours" -ForegroundColor Green
 
-    # With RemoteApp, session cleanup is handled by session-launch.ps1.
+    # Session cleanup is handled by session-launch.ps1 (alternate shell).
     # fResetBroken=1 ensures disconnected sessions are logged off automatically.
     Set-ItemProperty -Path $tsRegPath -Name "fResetBroken" -Value 1
     Write-Host "  Configured fResetBroken=1 (auto-reset disconnected sessions)" -ForegroundColor Green
@@ -901,29 +901,21 @@ if ($PSCmdlet.ShouldProcess("RDS session policies", "Configure timeouts and limi
     Set-ItemProperty -Path $tsRegPath -Name "fDisableAeroThemeEnabled" -Value 1 -Type DWord -Force
     Write-Host "  Disabled cursor blinking and Aero theme in sessions" -ForegroundColor Green
 
-    # Clean up legacy InitialProgram / fInheritInitialProgram values
-    foreach ($legacyProp in @("fInheritInitialProgram", "InitialProgram", "WorkDirectory")) {
-        Remove-ItemProperty -Path $tsRegPath -Name $legacyProp -ErrorAction SilentlyContinue
-    }
+    # Enable alternate shell: allow the RDP client's "alternate shell" setting
+    # to specify the initial program (session-launch.ps1). This replaces
+    # RemoteApp mode and gives proper fullscreen resize support.
     $rdpTcpPath = "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
-    foreach ($legacyProp in @("fInheritInitialProgram", "InitialProgram", "WorkDirectory")) {
-        Remove-ItemProperty -Path $rdpTcpPath -Name $legacyProp -ErrorAction SilentlyContinue
-    }
-    Write-Host "  Cleaned up legacy InitialProgram registry values" -ForegroundColor Green
+    Set-ItemProperty -Path $rdpTcpPath -Name "fInheritInitialProgram" -Value 1 -Type DWord -Force
+    # Clean up any server-side InitialProgram — we set it per-session via the .rdp file
+    Remove-ItemProperty -Path $rdpTcpPath -Name "InitialProgram" -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $rdpTcpPath -Name "WorkDirectory" -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $tsRegPath -Name "InitialProgram" -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path $tsRegPath -Name "WorkDirectory" -ErrorAction SilentlyContinue
+    Write-Host "  Enabled alternate shell (fInheritInitialProgram=1)" -ForegroundColor Green
 
-    # Remove legacy HKLM Run key (replaced by RemoteApp)
+    # Remove legacy HKLM Run key
     $runKeyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
     Remove-ItemProperty -Path $runKeyPath -Name "GatewayLauncher" -Force -ErrorAction SilentlyContinue
-
-    # Enable RemoteApp: allow any program to be launched as a RemoteApp.
-    # The RDP file specifies session-launch.ps1 as the RemoteApp program.
-    # This is how CyberArk PSM works -- no desktop, no shell, just the app.
-    $tsAppPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Terminal Server\TSAppAllowList"
-    if (-not (Test-Path $tsAppPath)) {
-        New-Item -Path $tsAppPath -Force | Out-Null
-    }
-    Set-ItemProperty -Path $tsAppPath -Name "fDisabledAllowList" -Value 1 -Type DWord -Force
-    Write-Host "  Enabled RemoteApp allow-all (TSAppAllowList\fDisabledAllowList=1)" -ForegroundColor Green
 
     # TermService restart is deferred to the end of the script so all
     # registry and configuration changes are applied first.

@@ -76,10 +76,11 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	connectPageTemplate.Execute(w, data)
 }
 
-// handleRDPFile serves a downloadable .rdp file configured as a RemoteApp.
-// The RemoteApp launches session-launch.ps1 which injects target credentials,
-// starts mstsc to the target, and records the session. The user never sees the
-// gateway desktop — only the target machine's mstsc window appears.
+// handleRDPFile serves a downloadable .rdp file that uses "alternate shell" to
+// launch session-launch.ps1 as the user's shell. The script injects target
+// credentials, starts mstsc fullscreen to the target, and records the session.
+// The user sees the target desktop filling their screen; the bastion desktop
+// is never shown because PowerShell runs hidden as the shell.
 func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "session_id")
 
@@ -99,11 +100,8 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"authentication level:i:0\r\n"+
 			"prompt for credentials:i:0\r\n"+
 			"enablecredsspsupport:i:0\r\n"+
-			"remoteapplicationmode:i:1\r\n"+
-			"remoteapplicationprogram:s:C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n"+
-			"remoteapplicationname:s:P0rtal Gateway\r\n"+
-			"remoteapplicationcmdline:s:-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File \"%s\" -ConfigPath \"%s\"\r\n"+
-			"disableremoteappcapscheck:i:1\r\n"+
+			"screen mode id:i:2\r\n"+
+			"alternate shell:s:C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File \"%s\" -ConfigPath \"%s\"\r\n"+
 			"redirectclipboards:i:1\r\n"+
 			"redirectdrives:i:0\r\n"+
 			"audiomode:i:0\r\n"+
