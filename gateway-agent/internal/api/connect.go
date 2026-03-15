@@ -113,11 +113,6 @@ func (s *Server) handleRDPFile(w http.ResponseWriter, r *http.Request) {
 			"networkautodetect:i:1\r\n"+
 			"bandwidthautodetect:i:1\r\n"+
 			"session bpp:i:16\r\n"+
-			"disable wallpaper:i:1\r\n"+
-			"disable full window drag:i:1\r\n"+
-			"disable menu anims:i:1\r\n"+
-			"disable themes:i:1\r\n"+
-			"disable cursor setting:i:0\r\n"+
 			"allow font smoothing:i:0\r\n"+
 			"allow desktop composition:i:0\r\n"+
 			"compression:i:1\r\n",
