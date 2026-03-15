@@ -10,7 +10,12 @@
       "Bash(python3 -c \":*)",
       "Bash(grep -ri \"nvenc\\\\|qsv\\\\|amf\\\\|dxgi\\\\|avc\\\\|h264\\\\|bgra\\\\|yuv\\\\|fmp4\\\\|mpeg\\\\|hevc\" /Users/miguelcampos/src/p0rtal-4 --include=*.md --include=*.go --include=*.ps1)",
       "Bash(git ls-tree:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(/opt/homebrew/bin/go vet:*)",
+      "Bash(git rm:*)",
+      "Bash(mkdir -p portal/src)",
+      "Bash(mv portal/*.cs portal/*.csproj portal/src/)",
+      "Bash(find . -name '*.go' -exec sed -i '' 's|github.com/p0rtal-4/gateway-agent|github.com/p0rtal-4/p0rtal|g' {} +)"
     ],
     "additionalDirectories": [
       "/Users/miguelcampos/src/p0rtal-4/.claude/worktrees/agent-a64658c3/gateway-agent/dist"

@@ -8,6 +8,8 @@
 *.test
 *.out
 *.prof
+# bin/
+
 
 # IDE
 .vscode/
@@ -27,3 +29,6 @@ Thumbs.db
 credentials.json
 user-pool.json
 agent.json
+
+# Claude
+.claude/
