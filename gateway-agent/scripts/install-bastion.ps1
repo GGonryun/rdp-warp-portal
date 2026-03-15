@@ -1277,9 +1277,7 @@ full address:s:${targetHost}:${targetPort}
 username:s:${fullUser}
 prompt for credentials:i:0
 authentication level:i:0
-screen mode id:i:2
-desktopwidth:i:${rdpW}
-desktopheight:i:${rdpH}
+screen mode id:i:1
 dynamic resolution:i:1
 use multimon:i:0
 redirectclipboards:i:1

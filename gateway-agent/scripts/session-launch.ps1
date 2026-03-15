@@ -241,10 +241,9 @@ full address:s:${targetHost}:${targetPort}
 username:s:${fullUser}
 prompt for credentials:i:0
 authentication level:i:0
-screen mode id:i:2
-desktopwidth:i:${rdpW}
-desktopheight:i:${rdpH}
+screen mode id:i:1
 dynamic resolution:i:1
+smart sizing:i:1
 use multimon:i:0
 redirectclipboards:i:1
 redirectdrives:i:0
@@ -256,10 +255,6 @@ networkautodetect:i:0
 bandwidthautodetect:i:0
 compression:i:1
 videoplaybackmode:i:1
-disable wallpaper:i:1
-disable full window drag:i:1
-disable menu anims:i:1
-disable themes:i:0
 allow font smoothing:i:1
 redirectcomports:i:0
 redirectprinters:i:0
