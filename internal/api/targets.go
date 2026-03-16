@@ -27,17 +27,11 @@ type TargetResponse struct {
 
 // RegisterRoutes registers the target routes on the router.
 func (h *TargetsHandler) RegisterRoutes(router *Router) {
-	router.HandleFunc("GET /api/targets", h.ListTargets, true)
+	router.HandleFunc("GET /api/targets", h.ListTargets, false)
 }
 
 // ListTargets handles GET /api/targets.
 func (h *TargetsHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
-	userID := getUserID(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, "user not authenticated")
-		return
-	}
-
 	targets, err := h.provider.ListTargets(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list targets")
