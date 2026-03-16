@@ -23,6 +23,8 @@ public class RdpClientHost : AxHost
     private bool _connected;
     private readonly System.Windows.Forms.Timer _pollTimer;
     private DateTime _connectStarted;
+    private int _currentWidth;
+    private int _currentHeight;
 
     /// <summary>Fired when the RDP connection is established.</summary>
     public event Action? OnRdpConnected;
@@ -95,6 +97,8 @@ public class RdpClientHost : AxHost
             var bounds = Screen.PrimaryScreen!.Bounds;
             _ocx.DesktopWidth = bounds.Width;
             _ocx.DesktopHeight = bounds.Height;
+            _currentWidth = bounds.Width;
+            _currentHeight = bounds.Height;
 
             Logger.Log($"RDP configured — server={config.TargetHost}:{config.TargetPort} user={config.TargetUser} desktop={bounds.Width}x{bounds.Height}");
         }
@@ -150,32 +154,51 @@ public class RdpClientHost : AxHost
     }
 
     /// <summary>
-    /// Attempt a seamless reconnect at a new resolution (IMsRdpClient8::Reconnect).
-    /// Falls back to a full disconnect/reconnect cycle if Reconnect() is not available.
+    /// Update the remote session resolution without disconnecting.
+    /// Uses IMsRdpClientNonScriptable5::UpdateSessionDisplaySettings (MsRdpClient9+).
+    /// Returns true on success, false if the API is unavailable or fails.
     /// </summary>
-    public void Reconnect(uint width, uint height)
+    public bool UpdateSessionDisplay(int width, int height)
     {
-        if (_ocx == null || !IsConnected) return;
+        if (_ocx == null || !IsConnected) return false;
 
         try
         {
-            Logger.Log($"Attempting seamless reconnect at {width}x{height}");
-            _ocx!.Reconnect(width, height);
+            Logger.Log($"UpdateSessionDisplaySettings({width}, {height})");
+            _ocx!.UpdateSessionDisplaySettings(
+                (uint)width, (uint)height,
+                0u, 0u,    // physical dimensions (0 = server decides)
+                0u,         // orientation = landscape
+                100u,       // desktop scale 100%
+                100u        // device scale 100%
+            );
+            _currentWidth = width;
+            _currentHeight = height;
+            Logger.Log($"UpdateSessionDisplaySettings succeeded — now {width}x{height}");
+            return true;
         }
         catch (Exception ex)
         {
-            Logger.LogError("Seamless reconnect failed, performing full reconnect cycle", ex);
-            try
-            {
-                _ocx!.Disconnect();
-                _ocx!.DesktopWidth = (int)width;
-                _ocx!.DesktopHeight = (int)height;
-                _ocx!.Connect();
-            }
-            catch (Exception innerEx)
-            {
-                Logger.LogError("Full reconnect cycle also failed", innerEx);
-            }
+            Logger.LogError("UpdateSessionDisplaySettings failed", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Enable or disable SmartSizing (server-side bitmap scaling to fit the control).
+    /// Used for immediate visual feedback while a resolution update is in flight.
+    /// </summary>
+    public void SetSmartSizing(bool enabled)
+    {
+        if (_ocx == null) return;
+        try
+        {
+            _ocx!.AdvancedSettings9.SmartSizing = enabled;
+            Logger.Log($"SmartSizing = {enabled}");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Failed to set SmartSizing", ex);
         }
     }
 

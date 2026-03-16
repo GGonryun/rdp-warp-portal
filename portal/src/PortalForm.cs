@@ -17,6 +17,9 @@ public class PortalForm : Form
     private readonly StatusReporter _status;
     private bool _recordingStarted;
     private DateTime _connectedAt;
+    private int _lastAppliedWidth;
+    private int _lastAppliedHeight;
+    private const int MinResizeThresholdPx = 50;
 
     public PortalForm(SessionConfig config)
     {
@@ -80,8 +83,15 @@ public class PortalForm : Form
         _connectedAt = DateTime.UtcNow;
         Logger.Log("RDP connected — portal is active");
 
-        // Start recording at current screen resolution.
+        // Record initial resolution for resize threshold checks.
         var screen = Screen.PrimaryScreen;
+        if (screen != null)
+        {
+            _lastAppliedWidth = screen.Bounds.Width;
+            _lastAppliedHeight = screen.Bounds.Height;
+        }
+
+        // Start recording at current screen resolution.
         if (screen != null && !_recordingStarted)
         {
             _recordingStarted = _recorder.Start(screen.Bounds.Width, screen.Bounds.Height);
@@ -161,13 +171,69 @@ public class PortalForm : Form
     {
         _resizeDebounceTimer.Stop();
 
+        // Suppress resizes shortly after initial connection — the display
+        // change when the RDP session first establishes is expected.
+        if (_connectedAt != default && (DateTime.UtcNow - _connectedAt).TotalMilliseconds < ResizeSuppressionMs)
+        {
+            Logger.Log("Resize suppressed — within post-connect suppression window");
+            return;
+        }
+
+        if (!_rdpHost.IsConnected)
+        {
+            Logger.Log("Resize ignored — not connected");
+            return;
+        }
+
         var screen = Screen.PrimaryScreen;
         if (screen == null) return;
 
         int newWidth = screen.Bounds.Width;
         int newHeight = screen.Bounds.Height;
 
-        Logger.Log($"Display resize detected — {newWidth}x{newHeight} (RDP session keeps initial resolution)");
+        // Skip if change is too small.
+        if (Math.Abs(newWidth - _lastAppliedWidth) < MinResizeThresholdPx &&
+            Math.Abs(newHeight - _lastAppliedHeight) < MinResizeThresholdPx)
+        {
+            Logger.Log($"Resize below threshold — {newWidth}x{newHeight} vs {_lastAppliedWidth}x{_lastAppliedHeight}");
+            return;
+        }
+
+        Logger.Log($"Applying display resize — {_lastAppliedWidth}x{_lastAppliedHeight} -> {newWidth}x{newHeight}");
+
+        // Enable SmartSizing for immediate visual feedback while resolution updates.
+        _rdpHost.SetSmartSizing(true);
+
+        // Request actual resolution change via UpdateSessionDisplaySettings.
+        if (_rdpHost.UpdateSessionDisplay(newWidth, newHeight))
+        {
+            _lastAppliedWidth = newWidth;
+            _lastAppliedHeight = newHeight;
+
+            // Disable SmartSizing after a short delay to let the server process
+            // the resolution change — image becomes crisp at the new resolution.
+            var smartSizingTimer = new System.Windows.Forms.Timer { Interval = 500 };
+            smartSizingTimer.Tick += (s, _) =>
+            {
+                smartSizingTimer.Stop();
+                smartSizingTimer.Dispose();
+                _rdpHost.SetSmartSizing(false);
+            };
+            smartSizingTimer.Start();
+
+            // Restart recording at the new resolution.
+            if (_recordingStarted)
+            {
+                _recorder.Restart(newWidth, newHeight);
+            }
+        }
+        else
+        {
+            // UpdateSessionDisplaySettings failed — keep SmartSizing as fallback.
+            Logger.Log("Falling back to SmartSizing only (scaled view)");
+            _lastAppliedWidth = newWidth;
+            _lastAppliedHeight = newHeight;
+        }
     }
 
     protected override void Dispose(bool disposing)
