@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//usr/local/go/bin/**)",
+      "Read(//opt/homebrew/Cellar/go/1.25.6/libexec/bin/**)",
+      "Bash(/opt/homebrew/bin/go build:*)",
+      "Bash(/opt/homebrew/bin/go test:*)"
+    ]
+  }
+}

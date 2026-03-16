@@ -159,13 +159,59 @@ func (g *Gatekeeper) handleConnection(clientConn net.Conn) {
 
 	slog.Debug("gatekeeper: new connection", "session_id", g.sessionID, "remote", clientConn.RemoteAddr())
 
-	// Connect to the proxy immediately
+	// Read the X.224 Connection Request to extract the token
+	x224Packet, cookie, err := g.readX224Packet(clientConn)
+	if err != nil {
+		slog.Error("gatekeeper: failed to read X.224 packet", "session_id", g.sessionID, "error", err)
+		return
+	}
+
+	// Require a valid cookie with token
+	if cookie == nil {
+		slog.Warn("gatekeeper: no mstshash cookie in connection request", "session_id", g.sessionID)
+		return
+	}
+
+	// Enforce IP binding — only the IP that created the session can connect
+	if g.allowedIP != "" {
+		remoteIP := extractIP(clientConn.RemoteAddr().String())
+		if remoteIP != g.allowedIP {
+			slog.Warn("gatekeeper: connection from unauthorized IP",
+				"session_id", g.sessionID,
+				"allowed_ip", g.allowedIP,
+				"remote_ip", remoteIP,
+			)
+			return
+		}
+	}
+
+	// Validate the token (this consumes it — one-time use)
+	if g.validateToken != nil {
+		if err := g.validateToken(cookie.Token, cookie.TargetID); err != nil {
+			slog.Warn("gatekeeper: token validation failed",
+				"session_id", g.sessionID,
+				"error", err,
+				"remote", clientConn.RemoteAddr(),
+			)
+			return
+		}
+	}
+
+	slog.Info("gatekeeper: token validated", "session_id", g.sessionID, "user", cookie.UserID)
+
+	// Connect to the proxy
 	proxyConn, err := net.DialTimeout("tcp", g.proxyAddr, 5*time.Second)
 	if err != nil {
 		slog.Error("gatekeeper: failed to connect to proxy", "session_id", g.sessionID, "error", err)
 		return
 	}
 	defer proxyConn.Close()
+
+	// Forward the original X.224 packet to the proxy
+	if _, err := proxyConn.Write(x224Packet); err != nil {
+		slog.Error("gatekeeper: failed to forward X.224 packet", "session_id", g.sessionID, "error", err)
+		return
+	}
 
 	// Notify that a connection was established
 	if g.onConnected != nil {
@@ -174,7 +220,7 @@ func (g *Gatekeeper) handleConnection(clientConn net.Conn) {
 
 	slog.Info("gatekeeper: connection established, bridging", "session_id", g.sessionID)
 
-	// Bridge the connections bidirectionally - let proxy handle all protocol
+	// Bridge the connections bidirectionally
 	g.bridge(clientConn, proxyConn)
 }
 
@@ -383,6 +429,18 @@ func (g *Gatekeeper) bridge(client, proxy net.Conn) {
 	}()
 
 	wg.Wait()
+}
+
+// extractIP extracts the IP address from a "host:port" or "[ipv6]:port" string.
+func extractIP(addr string) string {
+	if idx := strings.LastIndex(addr, ":"); idx != -1 {
+		ip := addr[:idx]
+		if strings.HasPrefix(ip, "[") && strings.HasSuffix(ip, "]") {
+			return ip[1 : len(ip)-1]
+		}
+		return ip
+	}
+	return addr
 }
 
 // Addr returns the address the gatekeeper is listening on.
