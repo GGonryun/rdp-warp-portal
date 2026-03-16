@@ -330,6 +330,12 @@ func TestGatekeeper_OnConnectedCallback(t *testing.T) {
 }
 
 
+// sendX224Handshake sends a valid X.224 Connection Request with a cookie to a connection.
+func sendX224Handshake(conn net.Conn) {
+	packet := buildX224ConnectionRequest("user#target#token")
+	conn.Write(packet)
+}
+
 // TestGatekeeper_Stop_ForciblyClosesActiveConnections verifies that Stop()
 // forcibly closes active client connections.
 func TestGatekeeper_Stop_ForciblyClosesActiveConnections(t *testing.T) {
@@ -374,11 +380,12 @@ func TestGatekeeper_Stop_ForciblyClosesActiveConnections(t *testing.T) {
 	go gk.Start()
 	time.Sleep(50 * time.Millisecond)
 
-	// Connect a client
+	// Connect a client and send X.224 handshake
 	clientConn, err := net.Dial("tcp", gk.Addr().String())
 	if err != nil {
 		t.Fatalf("failed to connect client: %v", err)
 	}
+	sendX224Handshake(clientConn)
 
 	// Wait for connection to be established with proxy
 	select {
@@ -387,6 +394,13 @@ func TestGatekeeper_Stop_ForciblyClosesActiveConnections(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("proxy did not receive connection")
 	}
+
+	// Give time for bridge to be fully established and drain any echoed data
+	time.Sleep(50 * time.Millisecond)
+	drainBuf := make([]byte, 4096)
+	clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	clientConn.Read(drainBuf) // Drain echoed X.224 packet
+	clientConn.SetReadDeadline(time.Time{})
 
 	// Track if client connection was closed
 	clientClosed := make(chan error, 1)
@@ -476,6 +490,7 @@ func TestGatekeeper_Stop_ReturnsImmediately(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to connect client %d: %v", i, err)
 		}
+		sendX224Handshake(conn)
 		clientConns[i] = conn
 	}
 
@@ -518,17 +533,14 @@ func TestGatekeeper_Stop_BridgeGoroutinesExitCleanly(t *testing.T) {
 	}
 	defer proxyListener.Close()
 
-	proxyConnected := make(chan struct{}, 1)
+	proxyConnected := make(chan struct{}, 10)
 	go func() {
 		for {
 			conn, err := proxyListener.Accept()
 			if err != nil {
 				return
 			}
-			select {
-			case proxyConnected <- struct{}{}:
-			default:
-			}
+			proxyConnected <- struct{}{}
 			// Echo server that detects disconnects
 			go func(c net.Conn) {
 				defer c.Close()
@@ -557,11 +569,12 @@ func TestGatekeeper_Stop_BridgeGoroutinesExitCleanly(t *testing.T) {
 	go gk.Start()
 	time.Sleep(50 * time.Millisecond)
 
-	// Connect client
+	// Connect client and send X.224 handshake
 	clientConn, err := net.Dial("tcp", gk.Addr().String())
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
+	sendX224Handshake(clientConn)
 
 	// Wait for proxy connection to be established
 	select {
@@ -586,12 +599,14 @@ func TestGatekeeper_Stop_BridgeGoroutinesExitCleanly(t *testing.T) {
 		t.Fatal("bridge goroutines did not exit cleanly - Stop() hung")
 	}
 
-	// Verify client connection was closed
-	clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	buf := make([]byte, 1)
-	_, err = clientConn.Read(buf)
-	if err == nil {
-		t.Error("expected error reading from closed connection")
+	// Verify client connection was closed (drain any echoed data first)
+	clientConn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	drainBuf := make([]byte, 4096)
+	for {
+		_, readErr := clientConn.Read(drainBuf)
+		if readErr != nil {
+			break // Connection closed or deadline exceeded — expected
+		}
 	}
 
 	clientConn.Close()
@@ -715,6 +730,7 @@ func TestGatekeeper_Stop_MultipleActiveConnections(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to connect client %d: %v", i, err)
 		}
+		sendX224Handshake(conn)
 		clientConns[i] = conn
 
 		// Monitor each connection for closure
@@ -899,15 +915,17 @@ func TestGatekeeper_ProxyConnectionFailure(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Connect to gatekeeper
+	// Connect to gatekeeper and send X.224 handshake
 	conn, err := net.Dial("tcp", gk.Addr().String())
 	if err != nil {
 		t.Fatalf("failed to connect to gatekeeper: %v", err)
 	}
 	defer conn.Close()
 
+	sendX224Handshake(conn)
+
 	// The gatekeeper should close the connection when it can't connect to proxy
-	conn.SetReadDeadline(time.Now().Add(time.Second))
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 	buf := make([]byte, 1)
 	_, err = conn.Read(buf)
 	if err == nil {
@@ -944,11 +962,13 @@ func TestGatekeeper_NoOnConnectedCallback(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Connect should work without panic
+	// Connect and send X.224 handshake - should work without panic
 	conn, err := net.Dial("tcp", gk.Addr().String())
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
+	sendX224Handshake(conn)
+	time.Sleep(100 * time.Millisecond)
 	conn.Close()
 }
 

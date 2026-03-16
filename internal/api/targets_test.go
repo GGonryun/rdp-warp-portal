@@ -7,9 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/p0-security/rdp-broker/internal/credential"
 )
 
@@ -56,18 +54,10 @@ func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 	}
 
 	handler := NewTargetsHandler(provider)
-	router := NewRouter("test-secret", nil)
+	router := NewRouter("", nil)
 	handler.RegisterRoutes(router)
 
-	// Create valid JWT
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "user-123",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
-
 	req := httptest.NewRequest("GET", "/api/targets", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -101,17 +91,10 @@ func TestTargetsHandler_ListTargets_Empty(t *testing.T) {
 	provider.targets = []credential.TargetInfo{}
 
 	handler := NewTargetsHandler(provider)
-	router := NewRouter("test-secret", nil)
+	router := NewRouter("", nil)
 	handler.RegisterRoutes(router)
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "user-123",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
-
 	req := httptest.NewRequest("GET", "/api/targets", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -135,17 +118,10 @@ func TestTargetsHandler_ListTargets_ProviderError(t *testing.T) {
 	provider.listErr = errors.New("database connection failed")
 
 	handler := NewTargetsHandler(provider)
-	router := NewRouter("test-secret", nil)
+	router := NewRouter("", nil)
 	handler.RegisterRoutes(router)
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "user-123",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
-
 	req := httptest.NewRequest("GET", "/api/targets", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -164,93 +140,7 @@ func TestTargetsHandler_ListTargets_ProviderError(t *testing.T) {
 	}
 }
 
-func TestTargetsHandler_ListTargets_Unauthorized_NoToken(t *testing.T) {
-	provider := newMockProvider()
-	handler := NewTargetsHandler(provider)
-	router := NewRouter("test-secret", nil)
-	handler.RegisterRoutes(router)
-
-	req := httptest.NewRequest("GET", "/api/targets", nil)
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", rec.Code)
-	}
-}
-
-func TestTargetsHandler_ListTargets_Unauthorized_InvalidToken(t *testing.T) {
-	provider := newMockProvider()
-	handler := NewTargetsHandler(provider)
-	router := NewRouter("test-secret", nil)
-	handler.RegisterRoutes(router)
-
-	// Create token with wrong secret
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "user-123",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	})
-	tokenString, _ := token.SignedString([]byte("wrong-secret"))
-
-	req := httptest.NewRequest("GET", "/api/targets", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", rec.Code)
-	}
-}
-
-func TestTargetsHandler_ListTargets_Unauthorized_ExpiredToken(t *testing.T) {
-	provider := newMockProvider()
-	handler := NewTargetsHandler(provider)
-	router := NewRouter("test-secret", nil)
-	handler.RegisterRoutes(router)
-
-	// Create expired token
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "user-123",
-		"exp": time.Now().Add(-time.Hour).Unix(),
-	})
-	tokenString, _ := token.SignedString([]byte("test-secret"))
-
-	req := httptest.NewRequest("GET", "/api/targets", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenString)
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", rec.Code)
-	}
-}
-
-func TestTargetsHandler_ListTargets_Unauthorized_MissingUserID(t *testing.T) {
-	provider := newMockProvider()
-	handler := NewTargetsHandler(provider)
-
-	// Directly call the handler without auth middleware context
-	req := httptest.NewRequest("GET", "/api/targets", nil)
-	rec := httptest.NewRecorder()
-
-	handler.ListTargets(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", rec.Code)
-	}
-
-	var resp ErrorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	if resp.Message != "user not authenticated" {
-		t.Errorf("expected message 'user not authenticated', got %q", resp.Message)
-	}
-}
+// Auth tests removed — /api/targets no longer requires authentication.
 
 func TestNewTargetsHandler(t *testing.T) {
 	provider := newMockProvider()
