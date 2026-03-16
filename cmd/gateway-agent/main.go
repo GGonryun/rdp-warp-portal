@@ -29,6 +29,7 @@ func main() {
 	stop := flag.Bool("stop", false, "Stop the GatewayAgent service")
 	status := flag.Bool("status", false, "Show GatewayAgent service status")
 	test := flag.Bool("test", false, "Launch portal.exe with a static test session config")
+	clean := flag.Bool("clean", false, "Delete all recordings and log files")
 	installDir := flag.String("install-dir", `C:\Gateway`, "Installation directory")
 	flag.Parse()
 
@@ -64,6 +65,9 @@ func main() {
 	case *test:
 		runTestPortal(*installDir)
 		waitForKeypress()
+	case *clean:
+		runClean(*installDir)
+		waitForKeypress()
 	case noFlagsProvided():
 		showUsage()
 		waitForKeypress()
@@ -89,6 +93,7 @@ func showUsage() {
 	fmt.Println("  gateway-agent.exe --stop          Stop the GatewayAgent service")
 	fmt.Println("  gateway-agent.exe --uninstall     Remove bastion configuration")
 	fmt.Println("  gateway-agent.exe --test          Launch portal.exe with a test session")
+	fmt.Println("  gateway-agent.exe --clean         Delete all recordings and log files")
 	fmt.Println("  gateway-agent.exe --config PATH   Run interactively with a config file")
 	fmt.Println()
 	fmt.Println("First time? Run:  gateway-agent.exe --install")
@@ -282,6 +287,49 @@ func runUpgrade(installDir string) {
 
 	fmt.Println()
 	fmt.Println("Upgrade complete!")
+}
+
+// ---------------------------------------------------------------------------
+// Clean — delete recordings and logs
+// ---------------------------------------------------------------------------
+
+func runClean(installDir string) {
+	dirs := []struct {
+		path string
+		name string
+	}{
+		{filepath.Join(installDir, "recordings"), "recordings"},
+		{filepath.Join(installDir, "logs"), "logs"},
+	}
+
+	for _, d := range dirs {
+		entries, err := os.ReadDir(d.path)
+		if os.IsNotExist(err) {
+			fmt.Printf("%s: directory does not exist, skipping\n", d.name)
+			continue
+		}
+		if err != nil {
+			fmt.Printf("%s: error reading directory: %v\n", d.name, err)
+			continue
+		}
+		if len(entries) == 0 {
+			fmt.Printf("%s: already empty\n", d.name)
+			continue
+		}
+
+		count := len(entries)
+		fmt.Printf("%s: found %d items, deleting...\n", d.name, count)
+		for _, entry := range entries {
+			p := filepath.Join(d.path, entry.Name())
+			if err := os.RemoveAll(p); err != nil {
+				fmt.Printf("  failed to delete %s: %v\n", entry.Name(), err)
+			}
+		}
+		fmt.Printf("%s: cleaned (%d items removed)\n", d.name, count)
+	}
+
+	fmt.Println()
+	fmt.Println("Cleanup complete.")
 }
 
 // ---------------------------------------------------------------------------

@@ -36,11 +36,24 @@ func (s *Server) handleStreamFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ---- resolve and serve ----
-	filePath := filepath.Join(s.cfg.RecordingsDir, sessionID, filename)
+	sessionDir := filepath.Join(s.cfg.RecordingsDir, sessionID)
+	filePath := filepath.Join(sessionDir, filename)
 
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		respondError(w, http.StatusNotFound, "file not found")
 		return
+	}
+
+	// For playlists, don't serve until at least one segment exists.
+	// ffmpeg creates playlist.m3u8 immediately but the first segment
+	// takes a few seconds to finalize — serving the playlist early
+	// causes hls.js to loop on segment 404s without recovery.
+	if ext == ".m3u8" {
+		entries, _ := filepath.Glob(filepath.Join(sessionDir, "*.ts"))
+		if len(entries) == 0 {
+			respondError(w, http.StatusNotFound, "stream not ready")
+			return
+		}
 	}
 
 	switch ext {
@@ -209,8 +222,12 @@ const monitorHTML = `<!DOCTYPE html>
     hls.on(Hls.Events.ERROR, function(event, data) {
       if (data.fatal) {
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          showError("Network error — retrying…");
-          setTimeout(function() { hls.startLoad(); }, 3000);
+          showError("Waiting for stream…");
+          // Destroy and recreate — startLoad() alone won't recover from
+          // a 404 on the initial manifest fetch.
+          hls.destroy();
+          hls = null;
+          setTimeout(startHLS, 3000);
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           showError("Media error — recovering…");
           hls.recoverMediaError();

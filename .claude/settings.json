@@ -15,7 +15,8 @@
       "Bash(git rm:*)",
       "Bash(mkdir -p portal/src)",
       "Bash(mv portal/*.cs portal/*.csproj portal/src/)",
-      "Bash(find . -name '*.go' -exec sed -i '' 's|github.com/p0rtal-4/gateway-agent|github.com/p0rtal-4/p0rtal|g' {} +)"
+      "Bash(find . -name '*.go' -exec sed -i '' 's|github.com/p0rtal-4/gateway-agent|github.com/p0rtal-4/p0rtal|g' {} +)",
+      "Bash(find /Users/miguelcampos/src/p0rtal-4 -type f -name *.db -o -name *.sql)"
     ],
     "additionalDirectories": [
       "/Users/miguelcampos/src/p0rtal-4/.claude/worktrees/agent-a64658c3/gateway-agent/dist"

@@ -44,13 +44,42 @@ public class RecordingManager : IDisposable
     /// </summary>
     public void DetectEncoder()
     {
-        string encoderOutput = "";
+        // Test each hardware encoder by actually encoding a test frame.
+        // Checking ffmpeg -encoders only tells us what's compiled in, not
+        // what works at runtime (e.g. h264_nvenc fails without GPU/CUDA).
+        var candidates = new[]
+        {
+            ("h264_nvenc", new[] { "-c:v", "h264_nvenc", "-preset", "p1", "-rc", "constqp", "-qp", "28" }),
+            ("h264_qsv",   new[] { "-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "28" }),
+            ("h264_amf",   new[] { "-c:v", "h264_amf", "-quality", "speed", "-qp_i", "28", "-qp_p", "28" }),
+        };
+
+        foreach (var (name, args) in candidates)
+        {
+            if (TestEncoder(name))
+            {
+                SetEncoder(name, args);
+                return;
+            }
+        }
+
+        // Software fallback — always works
+        SetEncoder("libx264", new[] { "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "28", "-threads", "2" });
+    }
+
+    /// <summary>
+    /// Test if a hardware encoder actually works by encoding a single black frame.
+    /// Returns true if ffmpeg exits successfully, false otherwise.
+    /// </summary>
+    private bool TestEncoder(string encoderName)
+    {
         try
         {
+            var testArgs = $"-f lavfi -i color=black:s=64x64:d=0.1 -frames:v 1 -c:v {encoderName} -f null -";
             var psi = new ProcessStartInfo
             {
                 FileName = _ffmpegPath,
-                Arguments = "-hide_banner -encoders",
+                Arguments = testArgs,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -58,38 +87,17 @@ public class RecordingManager : IDisposable
             };
 
             using var proc = Process.Start(psi);
-            if (proc == null)
-            {
-                Logger.Log("Failed to start ffmpeg for encoder detection");
-                SetEncoder("libx264", new[] { "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "28", "-threads", "2" });
-                return;
-            }
+            if (proc == null) return false;
 
-            encoderOutput = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(10000);
+            proc.WaitForExit(5000);
+            bool ok = proc.HasExited && proc.ExitCode == 0;
+            Logger.Log($"Encoder test {encoderName}: {(ok ? "OK" : "FAILED")}");
+            return ok;
         }
         catch (Exception ex)
         {
-            Logger.Log($"Error running ffmpeg encoder detection: {ex.Message}");
-            SetEncoder("libx264", new[] { "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "28", "-threads", "2" });
-            return;
-        }
-
-        if (encoderOutput.Contains("h264_nvenc"))
-        {
-            SetEncoder("h264_nvenc", new[] { "-c:v", "h264_nvenc", "-preset", "p1", "-rc", "constqp", "-qp", "28" });
-        }
-        else if (encoderOutput.Contains("h264_qsv"))
-        {
-            SetEncoder("h264_qsv", new[] { "-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "28" });
-        }
-        else if (encoderOutput.Contains("h264_amf"))
-        {
-            SetEncoder("h264_amf", new[] { "-c:v", "h264_amf", "-quality", "speed", "-qp_i", "28", "-qp_p", "28" });
-        }
-        else
-        {
-            SetEncoder("libx264", new[] { "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-crf", "28", "-threads", "2" });
+            Logger.Log($"Encoder test {encoderName} error: {ex.Message}");
+            return false;
         }
     }
 
@@ -116,23 +124,33 @@ public class RecordingManager : IDisposable
         var playlistPath = Path.Combine(_recordingDir, "playlist.m3u8");
         var logPath = Path.Combine(_recordingDir, $"ffmpeg_{_segmentCounter}.log");
 
+        // Let gdigrab auto-detect the desktop size — specifying an explicit
+        // video_size can cause immediate failure if the display changed after
+        // the RDP session connected.
         var args = string.Join(" ", new[]
         {
+            "-y",
             "-f gdigrab",
             "-framerate 10",
-            "-offset_x 0",
-            "-offset_y 0",
-            $"-video_size {width}x{height}",
             "-i desktop"
         });
 
         args += " " + string.Join(" ", _encoderArgs);
 
+        // Round width/height to even numbers — H.264 encoders require this.
+        // The crop filter is faster than scale and avoids resampling artifacts.
+        args += " -vf \"crop=trunc(iw/2)*2:trunc(ih/2)*2\"";
+
+        // Force a keyframe every 2 seconds (20 frames at 10fps) so HLS can
+        // split segments reliably — without this, static desktops produce
+        // very sparse keyframes and segments take 30s+ instead of 2s.
+        args += " -g 20 -keyint_min 20";
+
         args += " " + string.Join(" ", new[]
         {
             "-pix_fmt yuv420p",
             "-f hls",
-            "-hls_time 4",
+            "-hls_time 2",
             "-hls_list_size 0",
             "-hls_flags append_list+independent_segments",
             $"-start_number {_segmentCounter}",
@@ -161,42 +179,38 @@ public class RecordingManager : IDisposable
                 return false;
             }
 
-            // Redirect stderr to log file asynchronously
+            // Set process priority and affinity
+            SetProcessPriorityAndAffinity(_ffmpegProcess.Id);
+
+            // Wait for process to either exit (failure) or keep running (success).
+            // Read stderr synchronously so we capture the error on failure.
+            _ffmpegProcess.WaitForExit(3000);
+
+            if (_ffmpegProcess.HasExited)
+            {
+                string stderr = "";
+                try { stderr = _ffmpegProcess.StandardError.ReadToEnd(); }
+                catch { }
+                Logger.Log($"ffmpeg exited early with code {_ffmpegProcess.ExitCode}, recording failed");
+                if (!string.IsNullOrEmpty(stderr))
+                    Logger.Log($"ffmpeg stderr: {stderr}");
+                _ffmpegProcess.Dispose();
+                _ffmpegProcess = null;
+                return false;
+            }
+
+            // Process is running — redirect stderr to log file in background
             _ = Task.Run(() =>
             {
                 try
                 {
                     using var logWriter = new StreamWriter(logPath, append: false);
-                    while (_ffmpegProcess != null && !_ffmpegProcess.HasExited)
-                    {
-                        var line = _ffmpegProcess.StandardError.ReadLine();
-                        if (line != null)
-                            logWriter.WriteLine(line);
-                    }
-                    // Drain remaining output
-                    var remaining = _ffmpegProcess?.StandardError.ReadToEnd();
-                    if (!string.IsNullOrEmpty(remaining))
-                        logWriter.Write(remaining);
+                    string? line;
+                    while ((line = _ffmpegProcess?.StandardError.ReadLine()) != null)
+                        logWriter.WriteLine(line);
                 }
-                catch
-                {
-                    // Ignore errors from log writing
-                }
+                catch { }
             });
-
-            // Set process priority and affinity
-            SetProcessPriorityAndAffinity(_ffmpegProcess.Id);
-
-            // Wait 2 seconds then check if process exited early (indicates failure)
-            System.Threading.Thread.Sleep(2000);
-
-            if (_ffmpegProcess.HasExited)
-            {
-                Logger.Log($"ffmpeg exited early with code {_ffmpegProcess.ExitCode}, recording failed");
-                _ffmpegProcess.Dispose();
-                _ffmpegProcess = null;
-                return false;
-            }
 
             Logger.Log($"ffmpeg started successfully (PID: {_ffmpegProcess.Id}, encoder: {_encoderName})");
             return true;

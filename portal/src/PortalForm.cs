@@ -91,14 +91,56 @@ public class PortalForm : Form
             _lastAppliedHeight = screen.Bounds.Height;
         }
 
-        // Start recording at current screen resolution.
-        if (screen != null && !_recordingStarted)
+        // Report active status immediately.
+        _status.Report("active");
+
+        // Delay recording start by 3s to let the remote desktop render and
+        // the display settle after the initial WM_DISPLAYCHANGE flurry.
+        var recordingDelayTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+        recordingDelayTimer.Tick += (s, _) =>
         {
-            _recordingStarted = _recorder.Start(screen.Bounds.Width, screen.Bounds.Height);
+            recordingDelayTimer.Stop();
+            recordingDelayTimer.Dispose();
+            StartRecording();
+        };
+        recordingDelayTimer.Start();
+    }
+
+    private void StartRecording()
+    {
+        if (_recordingStarted) return;
+
+        var screen = Screen.PrimaryScreen;
+        if (screen == null) return;
+
+        Logger.Log($"Starting recording at {screen.Bounds.Width}x{screen.Bounds.Height}");
+        _recordingStarted = _recorder.Start(screen.Bounds.Width, screen.Bounds.Height);
+
+        if (!_recordingStarted)
+        {
+            // Retry once after 3 more seconds
+            Logger.Log("Recording failed on first attempt, retrying in 3s...");
+            var retryTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            retryTimer.Tick += (s, _) =>
+            {
+                retryTimer.Stop();
+                retryTimer.Dispose();
+                var retryScreen = Screen.PrimaryScreen;
+                if (retryScreen != null)
+                {
+                    _recordingStarted = _recorder.Start(retryScreen.Bounds.Width, retryScreen.Bounds.Height);
+                    if (_recordingStarted)
+                        Logger.Log("Recording started on retry");
+                    else
+                        Logger.Log("Recording failed on retry — giving up");
+                }
+            };
+            retryTimer.Start();
         }
 
-        // Report active status with ffmpeg PID.
-        _status.Report("active", _recorder.ProcessId);
+        // Update status with ffmpeg PID if recording started.
+        if (_recordingStarted)
+            _status.Report("active", _recorder.ProcessId);
     }
 
     private void HandleRdpTimeout(int timeoutSeconds)
