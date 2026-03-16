@@ -1,6 +1,6 @@
 services:
   broker:
-    build: .
+    build: ./proxy
     init: true
     ports:
       - "8080:8080"
@@ -9,7 +9,7 @@ services:
       - BROKER_HOST=${BROKER_HOST}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - ./targets.json:/etc/rdp-broker/targets.json:ro
+      - ./proxy/targets.json:/etc/rdp-broker/targets.json:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
