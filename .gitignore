@@ -1,6 +1,13 @@
 .claude/.settings.local.json
+.claude/settings.local.json
+.claude/settings.json
 
 # Environment and secrets
 .env
+proxy/targets.json
 targets.json
 .targets.json
+*.rdp
+
+# Build artifacts
+broker
