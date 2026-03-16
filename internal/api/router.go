@@ -45,6 +45,8 @@ func NewRouter(mgr *session.Manager, credStore *credentials.Store, cfg *config.C
 	r.Get("/api/v1/sessions/{session_id}/connect", s.handleConnect)
 	r.Get("/api/v1/sessions/{session_id}/rdp-file", s.handleRDPFile)
 	r.Get("/api/v1/sessions/{session_id}/stream/{filename}", s.handleStreamFile)
+	r.Get("/api/v1/sessions/{session_id}/recordings", s.handleListSessionRecordings)
+	r.Get("/api/v1/sessions/{session_id}/recordings/{recording_id}/stream/{filename}", s.handleRecordingStreamFile)
 	r.Get("/api/v1/sessions/{session_id}/monitor", s.handleMonitor)
 	r.Get("/api/v1/sessions/{session_id}/recording", s.handleRecording)
 	r.Get("/api/v1/recordings", s.handleListRecordings)

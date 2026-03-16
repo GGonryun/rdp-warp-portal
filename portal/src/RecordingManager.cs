@@ -14,8 +14,10 @@ public class RecordingManager : IDisposable
     private int _segmentCounter;
     private string _encoderName = "";
     private string[] _encoderArgs = Array.Empty<string>();
+    private string _activeRecordingDir = "";
 
     public int? ProcessId => _ffmpegProcess?.Id;
+    public string ActiveRecordingDir => _activeRecordingDir;
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
@@ -118,11 +120,32 @@ public class RecordingManager : IDisposable
         width = width % 2 == 0 ? width : width - 1;
         height = height % 2 == 0 ? height : height - 1;
 
-        Directory.CreateDirectory(_recordingDir);
+        // Create a new rec_NNN subdirectory for this recording.
+        // Each portal.exe connection gets its own recording directory.
+        if (string.IsNullOrEmpty(_activeRecordingDir))
+        {
+            Directory.CreateDirectory(_recordingDir);
+            int nextIndex = 1;
+            try
+            {
+                var existing = Directory.GetDirectories(_recordingDir, "rec_*");
+                foreach (var dir in existing)
+                {
+                    var name = Path.GetFileName(dir);
+                    if (name.Length >= 4 && int.TryParse(name.Substring(4), out int num) && num >= nextIndex)
+                        nextIndex = num + 1;
+                }
+            }
+            catch { }
+            _activeRecordingDir = Path.Combine(_recordingDir, $"rec_{nextIndex:D3}");
+            Logger.Log($"Recording directory: {_activeRecordingDir}");
+        }
 
-        var segmentPattern = Path.Combine(_recordingDir, "segment_%04d.ts");
-        var playlistPath = Path.Combine(_recordingDir, "playlist.m3u8");
-        var logPath = Path.Combine(_recordingDir, $"ffmpeg_{_segmentCounter}.log");
+        Directory.CreateDirectory(_activeRecordingDir);
+
+        var segmentPattern = Path.Combine(_activeRecordingDir, "segment_%04d.ts");
+        var playlistPath = Path.Combine(_activeRecordingDir, "playlist.m3u8");
+        var logPath = Path.Combine(_activeRecordingDir, $"ffmpeg_{_segmentCounter}.log");
 
         // Let gdigrab auto-detect the desktop size — specifying an explicit
         // video_size can cause immediate failure if the display changed after
@@ -263,7 +286,8 @@ public class RecordingManager : IDisposable
         // Count existing segment files to determine the next start number
         try
         {
-            var segmentFiles = Directory.GetFiles(_recordingDir, "segment_*.ts");
+            var searchDir = string.IsNullOrEmpty(_activeRecordingDir) ? _recordingDir : _activeRecordingDir;
+            var segmentFiles = Directory.GetFiles(searchDir, "segment_*.ts");
             _segmentCounter = segmentFiles.Length;
             Logger.Log($"Restarting recording at {newWidth}x{newHeight}, segment counter: {_segmentCounter}");
         }

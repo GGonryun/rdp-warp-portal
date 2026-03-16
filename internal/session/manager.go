@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -190,9 +191,6 @@ func (m *Manager) UpdateSessionStatus(id string, cb *StatusCallback) error {
 		return fmt.Errorf("session %q not found", id)
 	}
 
-	if cb.Status != "" {
-		sess.Status = cb.Status
-	}
 	if cb.FFmpegPID != 0 {
 		sess.FFmpegPID = cb.FFmpegPID
 	}
@@ -200,19 +198,85 @@ func (m *Manager) UpdateSessionStatus(id string, cb *StatusCallback) error {
 		sess.RecordingPath = cb.RecordingPath
 	}
 
-	if cb.Status == StatusCompleted {
+	// Track per-connection recordings.
+	recID := recordingIDFromPath(cb.RecordingPath)
+
+	switch cb.Status {
+	case StatusActive:
+		sess.Status = StatusActive
+		// Start a new recording entry if we got a recording path.
+		if recID != "" && !hasRecording(sess, recID) {
+			sess.Recordings = append(sess.Recordings, Recording{
+				ID:        recID,
+				Status:    "active",
+				StartedAt: time.Now(),
+			})
+			log.Printf("session %s: recording %s started", id, recID)
+		}
+
+	case StatusDisconnected:
+		sess.Status = StatusDisconnected
+		now := time.Now()
+		sess.DisconnectedAt = &now
+		// Mark the recording as completed and finalize its playlist.
+		if recID != "" {
+			for i := range sess.Recordings {
+				if sess.Recordings[i].ID == recID {
+					sess.Recordings[i].Status = "completed"
+					sess.Recordings[i].EndedAt = &now
+					break
+				}
+			}
+			recDir := filepath.Join(m.cfg.RecordingsDir, id, recID)
+			go func() {
+				if err := recording.FinalizePlaylistDir(recDir); err != nil {
+					log.Printf("session %s: finalize %s failed: %v", id, recID, err)
+				} else {
+					log.Printf("session %s: recording %s finalized", id, recID)
+				}
+			}()
+		}
+
+	case StatusCompleted:
 		// Release lock before calling CompleteSession, which takes its own lock.
 		m.mu.Unlock()
 		err := m.CompleteSession(id)
 		m.mu.Lock() // re-acquire so the deferred Unlock is valid
 		return err
+
+	default:
+		if cb.Status != "" {
+			sess.Status = cb.Status
+		}
 	}
 
 	return nil
 }
 
+// recordingIDFromPath extracts the rec_NNN directory name from a recording path.
+func recordingIDFromPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	base := filepath.Base(path)
+	if strings.HasPrefix(base, "rec_") {
+		return base
+	}
+	return ""
+}
+
+// hasRecording checks if a session already has a recording with the given ID.
+func hasRecording(sess *Session, recID string) bool {
+	for _, r := range sess.Recordings {
+		if r.ID == recID {
+			return true
+		}
+	}
+	return false
+}
+
 // CompleteSession marks a session as completed, releases its user pool account,
-// and kicks off background recording finalization.
+// and kicks off background recording finalization for all recordings.
 func (m *Manager) CompleteSession(id string) error {
 	m.mu.Lock()
 	sess, ok := m.sessions[id]
@@ -226,9 +290,17 @@ func (m *Manager) CompleteSession(id string) error {
 	now := time.Now()
 	sess.Status = StatusCompleted
 	sess.EndedAt = &now
+
+	// Mark any still-active recordings as completed.
+	for i := range sess.Recordings {
+		if sess.Recordings[i].Status == "active" {
+			sess.Recordings[i].Status = "completed"
+			sess.Recordings[i].EndedAt = &now
+		}
+	}
 	m.mu.Unlock()
 
-	// Finalize the HLS playlist so it can be played back as a VOD.
+	// Finalize all HLS playlists so they can be played back as VOD.
 	go func() {
 		if err := recording.FinalizePlaylist(id, m.cfg); err != nil {
 			log.Printf("session %s: playlist finalize failed: %v", id, err)
@@ -274,12 +346,6 @@ func (m *Manager) checkRDSSessions() {
 		}
 	}
 
-	type rotateInfo struct {
-		sessionID   string
-		gatewayUser string
-	}
-	var toRotate []rotateInfo
-
 	m.mu.Lock()
 
 	for _, sess := range m.sessions {
@@ -297,15 +363,16 @@ func (m *Manager) checkRDSSessions() {
 			// RDS session is active.
 			sess.RDSSessionID = rds.ID
 			if sess.Status == StatusReady || sess.Status == StatusPending {
-				// First connection — schedule token rotation.
+				// First connection.
 				sess.Status = StatusActive
 				sess.ConnectedAt = &now
-				toRotate = append(toRotate, rotateInfo{sess.ID, sess.GatewayUser})
+				log.Printf("session %s: first connection detected", sess.ID)
 			} else if sess.Status == StatusDisconnected {
 				// Reconnection.
 				sess.Status = StatusActive
 				sess.ConnectedAt = &now
 				sess.DisconnectedAt = nil
+				log.Printf("session %s: reconnection detected", sess.ID)
 			}
 
 		case found && strings.EqualFold(rds.State, "Disc"):
@@ -323,21 +390,6 @@ func (m *Manager) checkRDSSessions() {
 		}
 	}
 	m.mu.Unlock()
-
-	// Rotate passwords outside the lock — this invalidates the session
-	// token so it cannot be reused for another connection.
-	for _, ri := range toRotate {
-		if err := m.userPool.RotatePassword(ri.gatewayUser); err != nil {
-			log.Printf("session %s: failed to rotate token: %v", ri.sessionID, err)
-			continue
-		}
-		m.mu.Lock()
-		if sess, ok := m.sessions[ri.sessionID]; ok {
-			sess.GatewayPass = ""
-		}
-		m.mu.Unlock()
-		log.Printf("session %s: session token invalidated after connect", ri.sessionID)
-	}
 }
 
 // WatchTimeouts checks for expired sessions and stale disconnected sessions

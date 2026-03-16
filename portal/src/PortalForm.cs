@@ -138,9 +138,9 @@ public class PortalForm : Form
             retryTimer.Start();
         }
 
-        // Update status with ffmpeg PID if recording started.
+        // Update status with ffmpeg PID and recording dir if recording started.
         if (_recordingStarted)
-            _status.Report("active", _recorder.ProcessId);
+            _status.Report("active", _recorder.ProcessId, _recorder.ActiveRecordingDir);
     }
 
     private void HandleRdpTimeout(int timeoutSeconds)
@@ -170,9 +170,10 @@ public class PortalForm : Form
     {
         Logger.Log($"RDP disconnected (reason={reason}), stopping recording and closing");
 
-        // Stop recording and report completion.
+        // Stop recording and report disconnected (not completed — the Go side
+        // handles the transition to completed after the reconnect grace period).
         _recorder.Stop();
-        _status.Report(reason == 0 ? "completed" : "completed");
+        _status.Report("disconnected", null, _recorder.ActiveRecordingDir);
 
         // Marshal to UI thread if needed.
         if (InvokeRequired)

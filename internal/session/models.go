@@ -13,6 +13,14 @@ const (
 	StatusTerminated   = "terminated"
 )
 
+// Recording represents a single recording within a session (one per connection).
+type Recording struct {
+	ID        string     `json:"id"`                   // "rec_001"
+	Status    string     `json:"status"`               // "active", "completed"
+	StartedAt time.Time  `json:"started_at"`
+	EndedAt   *time.Time `json:"ended_at,omitempty"`
+}
+
 // Session represents an RDP bastion session.
 type Session struct {
 	ID             string            `json:"id"`
@@ -31,6 +39,7 @@ type Session struct {
 	EndedAt        *time.Time        `json:"ended_at,omitempty"`
 	ExpiresAt      time.Time         `json:"expires_at"`
 	RecordingPath  string            `json:"recording_path,omitempty"`
+	Recordings     []Recording       `json:"recordings,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
 	FFmpegPID      int               `json:"-"`
 }

@@ -330,6 +330,7 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
     <div class="modal-body">
       <div id="monitor-info" style="font-size:0.8rem; color:var(--text-2); margin-bottom:0.75rem;"></div>
+      <div id="monitor-rec-tabs" style="display:flex; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.75rem;"></div>
       <div class="player-wrap">
         <video id="monitor-video" controls autoplay muted></video>
       </div>
@@ -602,41 +603,24 @@ function detailItem(label, value) {
 }
 
 // ===================== MONITOR =====================
+var monitorRecordings = [];
+var monitorSelectedRecID = null;
+var monitorRecPollTimer = null;
+
 function openMonitorModal(sessionId) {
   monitorSessionId = sessionId;
+  monitorSelectedRecID = null;
+  monitorRecordings = [];
   document.getElementById("monitor-title").textContent = "Live Monitor — " + sessionId.substring(0, 12);
   document.getElementById("monitor-info").textContent = "Loading...";
+  document.getElementById("monitor-rec-tabs").innerHTML = "";
   openModal("modal-monitor");
 
-  // Poll session info
   fetchMonitorInfo();
   monitorPollTimer = setInterval(fetchMonitorInfo, 5000);
 
-  // Start HLS
-  var video = document.getElementById("monitor-video");
-  var hlsUrl = API + "/sessions/" + sessionId + "/stream/playlist.m3u8";
-
-  if (Hls.isSupported()) {
-    hlsInstance = new Hls({
-      liveSyncDurationCount: 3,
-      liveMaxLatencyDurationCount: 6,
-      enableWorker: true
-    });
-    hlsInstance.loadSource(hlsUrl);
-    hlsInstance.attachMedia(video);
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
-      video.play().catch(function(){});
-    });
-    hlsInstance.on(Hls.Events.ERROR, function(ev, data) {
-      if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-        setTimeout(function() { if (hlsInstance) hlsInstance.startLoad(); }, 3000);
-      } else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-        if (hlsInstance) hlsInstance.recoverMediaError();
-      }
-    });
-  } else {
-    video.src = hlsUrl;
-  }
+  fetchMonitorRecordings();
+  monitorRecPollTimer = setInterval(fetchMonitorRecordings, 5000);
 }
 
 function fetchMonitorInfo() {
@@ -647,7 +631,86 @@ function fetchMonitorInfo() {
     if (d.target_name) parts.push("Target: " + d.target_name + " (" + (d.target_host || "") + ")");
     if (d.started_at) parts.push("Started: " + fmtTime(d.started_at));
     document.getElementById("monitor-info").innerHTML = parts.join(" &middot; ");
+
+    if (d.status === "completed" || d.status === "terminated") {
+      document.getElementById("btn-mon-terminate").style.display = "none";
+    }
   }).catch(function(){});
+}
+
+function fetchMonitorRecordings() {
+  if (!monitorSessionId) return;
+  fetch(API + "/sessions/" + monitorSessionId + "/recordings")
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      monitorRecordings = d.recordings || [];
+      renderMonitorRecTabs();
+      if (monitorRecordings.length === 0) return;
+
+      // Auto-select active recording, or latest if nothing selected
+      var activeRec = null;
+      for (var i = 0; i < monitorRecordings.length; i++) {
+        if (monitorRecordings[i].status === "active") { activeRec = monitorRecordings[i]; break; }
+      }
+      if (activeRec && monitorSelectedRecID !== activeRec.id) {
+        monitorSelectRec(activeRec.id);
+      } else if (!monitorSelectedRecID) {
+        monitorSelectRec(monitorRecordings[monitorRecordings.length - 1].id);
+      }
+    }).catch(function(){});
+}
+
+function renderMonitorRecTabs() {
+  var container = document.getElementById("monitor-rec-tabs");
+  container.innerHTML = "";
+  for (var i = 0; i < monitorRecordings.length; i++) {
+    var rec = monitorRecordings[i];
+    var btn = document.createElement("button");
+    btn.className = "btn btn-sm" + (rec.id === monitorSelectedRecID ? " btn-primary" : " btn-ghost");
+    btn.style.fontSize = "0.75rem";
+    var label = "Recording " + (i + 1);
+    if (rec.started_at) label += " (" + new Date(rec.started_at).toLocaleTimeString() + ")";
+    if (rec.status === "active") label += " \u25cf";
+    btn.textContent = label;
+    btn.setAttribute("data-id", rec.id);
+    btn.addEventListener("click", (function(id) { return function() { monitorSelectRec(id); }; })(rec.id));
+    container.appendChild(btn);
+  }
+}
+
+function monitorSelectRec(recID) {
+  monitorSelectedRecID = recID;
+  renderMonitorRecTabs();
+  monitorLoadStream(recID);
+}
+
+function monitorLoadStream(recID) {
+  destroyMonitorHLS(true);
+  var video = document.getElementById("monitor-video");
+  var hlsUrl = API + "/sessions/" + monitorSessionId + "/recordings/" + recID + "/stream/playlist.m3u8";
+
+  if (Hls.isSupported()) {
+    hlsInstance = new Hls({
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 3,
+      enableWorker: true
+    });
+    hlsInstance.loadSource(hlsUrl);
+    hlsInstance.attachMedia(video);
+    hlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
+      video.play().catch(function(){});
+    });
+    hlsInstance.on(Hls.Events.ERROR, function(ev, data) {
+      if (data.fatal && data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        hlsInstance.destroy(); hlsInstance = null;
+        setTimeout(function() { monitorLoadStream(recID); }, 3000);
+      } else if (data.fatal && data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        if (hlsInstance) hlsInstance.recoverMediaError();
+      }
+    });
+  } else {
+    video.src = hlsUrl;
+  }
 }
 
 function monitorJumpLive() {
@@ -668,13 +731,18 @@ function monitorTerminate() {
 
 function closeMonitor() {
   closeModal("modal-monitor");
-  destroyMonitorHLS();
+  destroyMonitorHLS(false);
 }
 
-function destroyMonitorHLS() {
+function destroyMonitorHLS(keepState) {
   if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-  if (monitorPollTimer) { clearInterval(monitorPollTimer); monitorPollTimer = null; }
-  monitorSessionId = null;
+  if (!keepState) {
+    if (monitorPollTimer) { clearInterval(monitorPollTimer); monitorPollTimer = null; }
+    if (monitorRecPollTimer) { clearInterval(monitorRecPollTimer); monitorRecPollTimer = null; }
+    monitorSessionId = null;
+    monitorSelectedRecID = null;
+    monitorRecordings = [];
+  }
   var v = document.getElementById("monitor-video");
   v.pause(); v.removeAttribute("src"); v.load();
 }
