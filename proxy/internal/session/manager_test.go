@@ -142,7 +142,7 @@ func TestManager_SessionLimitReached(t *testing.T) {
 		manager.Shutdown(ctx)
 	}()
 
-	_, err := manager.CreateSession(context.Background(), "user1", "dc-01", "127.0.0.1")
+	_, err := manager.CreateSession(context.Background(), "user1", "dc-01", "Administrator", "127.0.0.1")
 	if !errors.Is(err, ErrSessionLimitReached) {
 		t.Errorf("expected ErrSessionLimitReached, got %v", err)
 	}
@@ -152,7 +152,7 @@ func TestManager_TargetNotFound(t *testing.T) {
 	manager, cleanup := newTestManager(t)
 	defer cleanup()
 
-	_, err := manager.CreateSession(context.Background(), "user1", "nonexistent-target", "127.0.0.1")
+	_, err := manager.CreateSession(context.Background(), "user1", "nonexistent-target", "admin", "127.0.0.1")
 	if !errors.Is(err, credential.ErrTargetNotFound) {
 		t.Errorf("expected ErrTargetNotFound, got %v", err)
 	}
@@ -214,7 +214,7 @@ func TestManager_CreateAndTerminateSession_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Session creation should fail because 'sleep' doesn't open the port
-	_, err := manager.CreateSession(ctx, "user1", "dc-01", "127.0.0.1")
+	_, err := manager.CreateSession(ctx, "user1", "dc-01", "Administrator", "127.0.0.1")
 	if err == nil {
 		t.Error("expected error because proxy doesn't listen on port")
 	}
@@ -603,7 +603,7 @@ func TestManager_CreateSession_ShutdownInProgress(t *testing.T) {
 	cleanup()
 
 	// Try to create a session after shutdown
-	_, err := manager.CreateSession(context.Background(), "user1", "dc-01", "127.0.0.1")
+	_, err := manager.CreateSession(context.Background(), "user1", "dc-01", "Administrator", "127.0.0.1")
 	if err == nil {
 		t.Error("expected error when creating session during shutdown")
 	}
@@ -1088,7 +1088,7 @@ func TestManager_ProviderError(t *testing.T) {
 	}()
 
 	// Try to get credentials for a non-existent target
-	_, err = manager.CreateSession(context.Background(), "user1", "nonexistent-target", "127.0.0.1")
+	_, err = manager.CreateSession(context.Background(), "user1", "nonexistent-target", "admin", "127.0.0.1")
 	if !errors.Is(err, credential.ErrTargetNotFound) {
 		t.Errorf("expected ErrTargetNotFound, got %v", err)
 	}

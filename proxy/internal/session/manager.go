@@ -120,8 +120,9 @@ func NewManager(
 }
 
 // CreateSession creates a new RDP session for the given user and target.
+// username specifies which user account to connect as on the target.
 // clientIP is used to restrict RDP connections to the IP that created the session.
-func (m *Manager) CreateSession(ctx context.Context, userID, targetID, clientIP string) (*Session, error) {
+func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username, clientIP string) (*Session, error) {
 	m.mu.Lock()
 	if m.shutdown {
 		m.mu.Unlock()
@@ -136,7 +137,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, clientIP 
 	m.mu.Unlock()
 
 	// Get credentials from provider
-	creds, err := m.provider.GetTargetCredentials(ctx, targetID)
+	creds, err := m.provider.GetTargetCredentials(ctx, targetID, username)
 	if err != nil {
 		if errors.Is(err, credential.ErrTargetNotFound) {
 			return nil, err
@@ -170,7 +171,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, clientIP 
 		ID:           sessionID,
 		UserID:       userID,
 		TargetID:     targetID,
-		TargetHost:   creds.Hostname,
+		TargetHost:   creds.IP,
 		ExternalPort: externalPort,
 		InternalPort: internalPort,
 		ClientIP:     clientIP,

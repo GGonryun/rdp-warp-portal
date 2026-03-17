@@ -113,7 +113,7 @@ func (w *ConfigWriter) WriteConfig(sessionID string, internalPort int, creds *cr
 	config := ProxyConfig{
 		ServerHost:      "127.0.0.1",
 		ServerPort:      internalPort,
-		TargetHost:      creds.Hostname,
+		TargetHost:      creds.IP,
 		TargetPort:      creds.Port,
 		TargetUser:      creds.Username,
 		TargetPassword:  creds.Password,
@@ -155,7 +155,7 @@ func (w *ConfigWriter) GenerateConfigBytes(internalPort int, creds *credential.T
 	config := ProxyConfig{
 		ServerHost:      "127.0.0.1",
 		ServerPort:      internalPort,
-		TargetHost:      creds.Hostname,
+		TargetHost:      creds.IP,
 		TargetPort:      creds.Port,
 		TargetUser:      creds.Username,
 		TargetPassword:  creds.Password,

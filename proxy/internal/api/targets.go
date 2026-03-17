@@ -18,11 +18,18 @@ func NewTargetsHandler(provider credential.CredentialProvider) *TargetsHandler {
 	}
 }
 
-// TargetResponse is the response body for a single target.
+// TargetResponse is the response body for a single target with its available users.
 type TargetResponse struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Hostname string `json:"hostname"`
+	ID       string       `json:"id"`
+	Hostname string       `json:"hostname"`
+	IP       string       `json:"ip"`
+	Users    []TargetUser `json:"users"`
+}
+
+// TargetUser represents a user account available on a target.
+type TargetUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 // RegisterRoutes registers the target routes on the router.
@@ -32,18 +39,26 @@ func (h *TargetsHandler) RegisterRoutes(router *Router) {
 
 // ListTargets handles GET /api/targets.
 func (h *TargetsHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
-	targets, err := h.provider.ListTargets(r.Context())
+	destinations, err := h.provider.ListDestinations(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list targets")
 		return
 	}
 
-	resp := make([]TargetResponse, 0, len(targets))
-	for _, target := range targets {
+	resp := make([]TargetResponse, 0, len(destinations))
+	for _, d := range destinations {
+		users := make([]TargetUser, 0, len(d.Users))
+		for _, u := range d.Users {
+			users = append(users, TargetUser{
+				Username: u.Username,
+				Password: u.Password,
+			})
+		}
 		resp = append(resp, TargetResponse{
-			ID:       target.ID,
-			Name:     target.Name,
-			Hostname: target.Hostname,
+			ID:       d.ID,
+			Hostname: d.Hostname,
+			IP:       d.IP,
+			Users: users,
 		})
 	}
 

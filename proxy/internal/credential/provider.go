@@ -69,21 +69,27 @@ import (
 // in the credential provider's backing store.
 var ErrTargetNotFound = errors.New("target not found")
 
+// ErrUserNotFound is returned when a requested username does not exist
+// for the specified target.
+var ErrUserNotFound = errors.New("user not found")
+
 // CredentialProvider abstracts credential storage and retrieval.
 // Implementations must be safe for concurrent use from multiple goroutines.
 type CredentialProvider interface {
-	// GetTargetCredentials retrieves the RDP credentials for a target machine.
+	// GetTargetCredentials retrieves the RDP credentials for a specific user on a target machine.
 	//
 	// The targetID is a unique identifier for the target (e.g., "dc-01", "ws-05").
+	// The username specifies which user account to connect as.
 	// The context should be used for cancellation and timeout handling.
 	//
 	// Returns:
 	// - (*TargetCredentials, nil) on success
 	// - (nil, ErrTargetNotFound) if the target doesn't exist
+	// - (nil, ErrUserNotFound) if the username doesn't exist for the target
 	// - (nil, error) for other failures (network, auth, etc.)
 	//
 	// Implementations MUST NOT log or expose the returned credentials.
-	GetTargetCredentials(ctx context.Context, targetID string) (*TargetCredentials, error)
+	GetTargetCredentials(ctx context.Context, targetID, username string) (*TargetCredentials, error)
 
 	// ListTargets returns metadata about all available targets.
 	//
@@ -94,6 +100,16 @@ type CredentialProvider interface {
 	// - ([]TargetInfo, nil) on success (may be empty slice)
 	// - (nil, error) on failure
 	ListTargets(ctx context.Context) ([]TargetInfo, error)
+
+	// ListDestinations returns all targets with their full user credentials.
+	//
+	// Unlike ListTargets, this includes passwords for each user.
+	// This is used by the destinations API endpoint.
+	//
+	// Returns:
+	// - ([]TargetDestination, nil) on success (may be empty slice)
+	// - (nil, error) on failure
+	ListDestinations(ctx context.Context) ([]TargetDestination, error)
 
 	// Close releases any resources held by the provider.
 	//
@@ -110,8 +126,8 @@ type CredentialProvider interface {
 // TargetCredentials contains the full credentials needed to connect to a
 // target machine via RDP. This struct is NEVER exposed via the API.
 type TargetCredentials struct {
-	// Hostname is the target machine's IP address or DNS name.
-	Hostname string `json:"hostname"`
+	// IP is the target machine's IP address or DNS name.
+	IP string `json:"ip"`
 
 	// Port is the RDP port on the target machine (typically 3389).
 	Port int `json:"port"`
@@ -135,10 +151,24 @@ type TargetInfo struct {
 	// Used when requesting a session.
 	ID string `json:"id"`
 
-	// Name is a human-readable display name (e.g., "Domain Controller 01").
-	Name string `json:"name"`
-
-	// Hostname is the target machine's IP address or DNS name.
-	// Included for informational purposes; does not expose security info.
+	// Hostname is the target machine's hostname (e.g., "mike-rdp").
 	Hostname string `json:"hostname"`
+
+	// IP is the target machine's IP address or DNS name.
+	IP string `json:"ip"`
+}
+
+// TargetUser represents a user account available on a target machine.
+type TargetUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// TargetDestination contains a target with all its available user accounts.
+// This includes credentials and is used by the destinations API endpoint.
+type TargetDestination struct {
+	ID       string       `json:"id"`
+	Hostname string       `json:"hostname"`
+	IP       string       `json:"ip"`
+	Users []TargetUser `json:"users"`
 }

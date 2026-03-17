@@ -15,7 +15,7 @@ import (
 
 // SessionManager defines the interface for session management operations.
 type SessionManager interface {
-	CreateSession(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error)
+	CreateSession(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error)
 	GetSession(sessionID string) (*session.Session, error)
 	ListSessions(userID string) []*session.Session
 	TerminateSession(ctx context.Context, sessionID string) error
@@ -42,7 +42,8 @@ func NewSessionsHandler(manager SessionManager, brokerHost string) *SessionsHand
 // CreateSessionRequest is the request body for creating a session.
 type CreateSessionRequest struct {
 	TargetID string `json:"target_id"`
-	UserID   string `json:"user_id,omitempty"` // Optional: if not provided, uses JWT sub claim
+	Username string `json:"username"`          // Which user account to connect as on the target
+	UserID   string `json:"user_id,omitempty"` // Optional: identifier for the requesting user
 }
 
 // CreateSessionResponse is the response body for creating a session.
@@ -93,7 +94,12 @@ func (h *SessionsHandler) CreateSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Use user_id from request body, fall back to JWT claim
+	if req.Username == "" {
+		writeError(w, http.StatusBadRequest, "username is required")
+		return
+	}
+
+	// Use user_id from request body, fall back to context
 	userID := req.UserID
 	if userID == "" {
 		userID = getUserID(r.Context())
@@ -105,12 +111,14 @@ func (h *SessionsHandler) CreateSession(w http.ResponseWriter, r *http.Request) 
 	// Extract client IP for session binding
 	clientIP := extractClientIP(r)
 
-	sess, err := h.manager.CreateSession(r.Context(), userID, req.TargetID, clientIP)
+	sess, err := h.manager.CreateSession(r.Context(), userID, req.TargetID, req.Username, clientIP)
 	if err != nil {
 		slog.Error("failed to create session", "error", err, "target_id", req.TargetID, "user_id", userID)
 		switch {
 		case errors.Is(err, credential.ErrTargetNotFound):
 			writeError(w, http.StatusNotFound, "target not found")
+		case errors.Is(err, credential.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, "username not found for target")
 		case errors.Is(err, session.ErrSessionLimitReached):
 			writeError(w, http.StatusServiceUnavailable, "session limit reached")
 		case errors.Is(err, session.ErrProviderUnavailable):

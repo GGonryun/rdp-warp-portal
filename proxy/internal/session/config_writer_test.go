@@ -34,7 +34,7 @@ func TestWriteConfig(t *testing.T) {
 	}
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "Administrator",
 		Password: "P@ssw0rd!",
@@ -108,7 +108,7 @@ func TestWriteConfig_CreatesSessionDir(t *testing.T) {
 	writer, _ := NewConfigWriter(certDir, sessionDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -139,7 +139,7 @@ func TestDeleteConfig(t *testing.T) {
 	writer, _ := NewConfigWriter(tmpDir, tmpDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -172,7 +172,7 @@ func TestCleanupSession(t *testing.T) {
 	writer, _ := NewConfigWriter(tmpDir, sessionDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -204,7 +204,7 @@ func TestGenerateConfigBytes(t *testing.T) {
 	writer, _ := NewConfigWriter("/etc/certs", "/tmp/sessions")
 
 	creds := &credential.TargetCredentials{
-		Hostname: "192.168.1.100",
+		IP: "192.168.1.100",
 		Port:     3390,
 		Username: "testuser",
 		Password: "testpass",
@@ -244,7 +244,7 @@ func TestWriteConfig_SpecialCharactersInPassword(t *testing.T) {
 
 	// Password with special characters
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: `P@ss=w0rd!#$%^&*()[]{}|\:";'<>?,./`,
@@ -267,7 +267,7 @@ func TestWriteConfig_EmptyDomain(t *testing.T) {
 	writer, _ := NewConfigWriter(tmpDir, tmpDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "localadmin",
 		Password: "password",
@@ -292,7 +292,7 @@ func TestWriteConfig_OverwritesExisting(t *testing.T) {
 	sessionID := "overwrite-test"
 
 	creds1 := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "user1",
 		Password: "pass1",
@@ -300,7 +300,7 @@ func TestWriteConfig_OverwritesExisting(t *testing.T) {
 	}
 
 	creds2 := &credential.TargetCredentials{
-		Hostname: "10.0.2.20",
+		IP: "10.0.2.20",
 		Port:     3390,
 		Username: "user2",
 		Password: "pass2",
@@ -366,7 +366,7 @@ func TestWriteConfig_ConcurrentWrites(t *testing.T) {
 			defer wg.Done()
 			sessionID := "concurrent-" + string(rune('a'+idx))
 			creds := &credential.TargetCredentials{
-				Hostname: "10.0.1." + string(rune('0'+idx)),
+				IP: "10.0.1." + string(rune('0'+idx)),
 				Port:     3389 + idx,
 				Username: "user" + string(rune('0'+idx)),
 				Password: "pass" + string(rune('0'+idx)),
@@ -398,7 +398,7 @@ func TestWriteConfig_PathTraversalAttempt(t *testing.T) {
 	// filepath.Join(tmpDir, "../../../etc/passwd") will normalize the path
 	sessionID := "../../../etc/passwd"
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -425,7 +425,7 @@ func TestWriteConfig_VeryLongSessionID(t *testing.T) {
 	// Very long session ID
 	sessionID := strings.Repeat("a", 200)
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -445,7 +445,7 @@ func TestWriteConfig_AllSections(t *testing.T) {
 	writer, _ := NewConfigWriter(tmpDir, tmpDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -479,7 +479,7 @@ func TestWriteConfig_SecuritySettings(t *testing.T) {
 	writer, _ := NewConfigWriter(tmpDir, tmpDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -512,7 +512,7 @@ func TestGenerateConfigBytes_ValidContent(t *testing.T) {
 	writer, _ := NewConfigWriter("/etc/certs", "/tmp/sessions")
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -541,7 +541,7 @@ func TestWriteConfig_ChannelSettings(t *testing.T) {
 	writer, _ := NewConfigWriter(tmpDir, tmpDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -578,7 +578,7 @@ func TestWriteConfig_InputSettings(t *testing.T) {
 	writer, _ := NewConfigWriter(tmpDir, tmpDir)
 
 	creds := &credential.TargetCredentials{
-		Hostname: "10.0.1.10",
+		IP: "10.0.1.10",
 		Port:     3389,
 		Username: "admin",
 		Password: "pass",
@@ -613,7 +613,7 @@ func TestWriteConfig_DifferentPorts(t *testing.T) {
 		t.Run(string(rune('0'+port)), func(t *testing.T) {
 			sessionID := "port-test-" + itoa(port)
 			creds := &credential.TargetCredentials{
-				Hostname: "10.0.1.10",
+				IP: "10.0.1.10",
 				Port:     port,
 				Username: "admin",
 				Password: "pass",

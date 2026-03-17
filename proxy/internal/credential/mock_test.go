@@ -29,21 +29,24 @@ func TestGetTargetCredentials_Success(t *testing.T) {
 
 	tests := []struct {
 		targetID         string
-		expectedHostname string
+		username         string
+		expectedIP string
 		expectedPort     int
 		expectedUsername string
 		expectedDomain   string
 	}{
 		{
 			targetID:         "dc-01",
-			expectedHostname: "10.0.1.10",
+			username:         "Administrator",
+			expectedIP: "10.0.1.10",
 			expectedPort:     3389,
 			expectedUsername: "Administrator",
 			expectedDomain:   "CORP",
 		},
 		{
 			targetID:         "ws-05",
-			expectedHostname: "10.0.1.50",
+			username:         "svc-rdp",
+			expectedIP: "10.0.1.50",
 			expectedPort:     3389,
 			expectedUsername: "svc-rdp",
 			expectedDomain:   "CORP",
@@ -52,7 +55,7 @@ func TestGetTargetCredentials_Success(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.targetID, func(t *testing.T) {
-			creds, err := provider.GetTargetCredentials(ctx, tt.targetID)
+			creds, err := provider.GetTargetCredentials(ctx, tt.targetID, tt.username)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -60,8 +63,8 @@ func TestGetTargetCredentials_Success(t *testing.T) {
 				t.Fatal("credentials are nil")
 			}
 
-			if creds.Hostname != tt.expectedHostname {
-				t.Errorf("hostname: got %q, want %q", creds.Hostname, tt.expectedHostname)
+			if creds.IP != tt.expectedIP {
+				t.Errorf("ip: got %q, want %q", creds.IP, tt.expectedIP)
 			}
 			if creds.Port != tt.expectedPort {
 				t.Errorf("port: got %d, want %d", creds.Port, tt.expectedPort)
@@ -72,7 +75,6 @@ func TestGetTargetCredentials_Success(t *testing.T) {
 			if creds.Domain != tt.expectedDomain {
 				t.Errorf("domain: got %q, want %q", creds.Domain, tt.expectedDomain)
 			}
-			// Verify password is not empty (don't log actual password in tests)
 			if creds.Password == "" {
 				t.Error("password is empty")
 			}
@@ -84,7 +86,7 @@ func TestGetTargetCredentials_NotFound(t *testing.T) {
 	provider := NewMockProvider()
 	ctx := context.Background()
 
-	creds, err := provider.GetTargetCredentials(ctx, "nonexistent-target")
+	creds, err := provider.GetTargetCredentials(ctx, "nonexistent-target", "admin")
 	if err == nil {
 		t.Fatal("expected error for nonexistent target")
 	}
@@ -96,12 +98,28 @@ func TestGetTargetCredentials_NotFound(t *testing.T) {
 	}
 }
 
+func TestGetTargetCredentials_UserNotFound(t *testing.T) {
+	provider := NewMockProvider()
+	ctx := context.Background()
+
+	creds, err := provider.GetTargetCredentials(ctx, "dc-01", "nonexistent-user")
+	if err == nil {
+		t.Fatal("expected error for nonexistent user")
+	}
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("expected ErrUserNotFound, got: %v", err)
+	}
+	if creds != nil {
+		t.Error("credentials should be nil for nonexistent user")
+	}
+}
+
 func TestGetTargetCredentials_ContextCanceled(t *testing.T) {
 	provider := NewMockProvider()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
-	creds, err := provider.GetTargetCredentials(ctx, "dc-01")
+	creds, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 	if err == nil {
 		t.Fatal("expected error for canceled context")
 	}
@@ -121,7 +139,7 @@ func TestGetTargetCredentials_ContextTimeout(t *testing.T) {
 	// Let the timeout expire
 	time.Sleep(time.Millisecond)
 
-	creds, err := provider.GetTargetCredentials(ctx, "dc-01")
+	creds, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 	if err == nil {
 		t.Fatal("expected error for timed out context")
 	}
@@ -156,63 +174,44 @@ func TestListTargets_Success(t *testing.T) {
 	if !ok {
 		t.Fatal("dc-01 not found in targets")
 	}
-	if dc01.Name != "Domain Controller 01" {
-		t.Errorf("dc-01 name: got %q, want %q", dc01.Name, "Domain Controller 01")
+	if dc01.Hostname != "dc-01" {
+		t.Errorf("dc-01 hostname: got %q, want %q", dc01.Hostname, "dc-01")
 	}
-	if dc01.Hostname != "10.0.1.10" {
-		t.Errorf("dc-01 hostname: got %q, want %q", dc01.Hostname, "10.0.1.10")
-	}
-
-	// Verify ws-05
-	ws05, ok := targetMap["ws-05"]
-	if !ok {
-		t.Fatal("ws-05 not found in targets")
-	}
-	if ws05.Name != "Workstation 05" {
-		t.Errorf("ws-05 name: got %q, want %q", ws05.Name, "Workstation 05")
-	}
-	if ws05.Hostname != "10.0.1.50" {
-		t.Errorf("ws-05 hostname: got %q, want %q", ws05.Hostname, "10.0.1.50")
-	}
-
-	// Verify win-vm-1
-	winvm1, ok := targetMap["win-vm-1"]
-	if !ok {
-		t.Fatal("win-vm-1 not found in targets")
-	}
-	if winvm1.Name != "Azure Windows VM" {
-		t.Errorf("win-vm-1 name: got %q, want %q", winvm1.Name, "Azure Windows VM")
-	}
-	if winvm1.Hostname != "20.64.171.136" {
-		t.Errorf("win-vm-1 hostname: got %q, want %q", winvm1.Hostname, "20.64.171.136")
+	if dc01.IP != "10.0.1.10" {
+		t.Errorf("dc-01 ip: got %q, want %q", dc01.IP, "10.0.1.10")
 	}
 }
 
-func TestListTargets_DoesNotExposeCredentials(t *testing.T) {
+func TestListDestinations_Success(t *testing.T) {
 	provider := NewMockProvider()
 	ctx := context.Background()
 
-	targets, err := provider.ListTargets(ctx)
+	destinations, err := provider.ListDestinations(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if len(destinations) != 3 {
+		t.Fatalf("expected 3 destinations, got %d", len(destinations))
+	}
 
-	// TargetInfo struct should only have ID, Name, Hostname
-	// This is a compile-time check - if TargetInfo gains credential fields,
-	// we want to ensure they're not populated
-	for _, target := range targets {
-		// These fields should exist and be populated
-		if target.ID == "" {
-			t.Error("target ID is empty")
-		}
-		if target.Name == "" {
-			t.Error("target Name is empty")
-		}
-		if target.Hostname == "" {
-			t.Error("target Hostname is empty")
-		}
-		// TargetInfo has no credential fields by design
-		// This test documents that design decision
+	// Build a map for easier lookup
+	destMap := make(map[string]TargetDestination)
+	for _, d := range destinations {
+		destMap[d.ID] = d
+	}
+
+	dc01, ok := destMap["dc-01"]
+	if !ok {
+		t.Fatal("dc-01 not found in destinations")
+	}
+	if len(dc01.Users) != 1 {
+		t.Fatalf("expected 1 user for dc-01, got %d", len(dc01.Users))
+	}
+	if dc01.Users[0].Username != "Administrator" {
+		t.Errorf("expected username 'Administrator', got %q", dc01.Users[0].Username)
+	}
+	if dc01.Users[0].Password == "" {
+		t.Error("expected password to be included")
 	}
 }
 
@@ -234,23 +233,25 @@ func TestListTargets_ContextCanceled(t *testing.T) {
 }
 
 func TestNewMockProviderFromConfig(t *testing.T) {
-	// Create a temporary config file
 	configContent := `{
   "targets": {
     "test-srv-01": {
-      "name": "Test Server 01",
-      "hostname": "192.168.1.100",
+      "hostname": "test-srv-01",
+      "ip": "192.168.1.100",
       "port": 3390,
-      "username": "testuser",
-      "password": "testpass123",
-      "domain": "TESTDOMAIN"
+      "domain": "TESTDOMAIN",
+      "users": [
+        {"username": "testuser", "password": "testpass123"},
+        {"username": "admin", "password": "adminpass"}
+      ]
     },
     "test-srv-02": {
-      "name": "Test Server 02",
-      "hostname": "192.168.1.101",
-      "username": "admin",
-      "password": "adminpass",
-      "domain": "TESTDOMAIN"
+      "hostname": "test-srv-02",
+      "ip": "192.168.1.101",
+      "domain": "TESTDOMAIN",
+      "users": [
+        {"username": "admin", "password": "adminpass"}
+      ]
     }
   }
 }`
@@ -261,13 +262,11 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	// Load the provider from config
 	provider, err := NewMockProviderFromConfig(configPath)
 	if err != nil {
 		t.Fatalf("failed to load provider from config: %v", err)
 	}
 
-	// Verify target count
 	if provider.TargetCount() != 2 {
 		t.Errorf("expected 2 targets, got %d", provider.TargetCount())
 	}
@@ -275,12 +274,12 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 	ctx := context.Background()
 
 	// Test first target with explicit port
-	creds1, err := provider.GetTargetCredentials(ctx, "test-srv-01")
+	creds1, err := provider.GetTargetCredentials(ctx, "test-srv-01", "testuser")
 	if err != nil {
 		t.Fatalf("failed to get credentials for test-srv-01: %v", err)
 	}
-	if creds1.Hostname != "192.168.1.100" {
-		t.Errorf("hostname: got %q, want %q", creds1.Hostname, "192.168.1.100")
+	if creds1.IP != "192.168.1.100" {
+		t.Errorf("ip: got %q, want %q", creds1.IP, "192.168.1.100")
 	}
 	if creds1.Port != 3390 {
 		t.Errorf("port: got %d, want %d", creds1.Port, 3390)
@@ -295,8 +294,17 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 		t.Errorf("domain: got %q, want %q", creds1.Domain, "TESTDOMAIN")
 	}
 
+	// Test second user on first target
+	creds1b, err := provider.GetTargetCredentials(ctx, "test-srv-01", "admin")
+	if err != nil {
+		t.Fatalf("failed to get credentials for admin on test-srv-01: %v", err)
+	}
+	if creds1b.Username != "admin" {
+		t.Errorf("username: got %q, want %q", creds1b.Username, "admin")
+	}
+
 	// Test second target with default port
-	creds2, err := provider.GetTargetCredentials(ctx, "test-srv-02")
+	creds2, err := provider.GetTargetCredentials(ctx, "test-srv-02", "admin")
 	if err != nil {
 		t.Fatalf("failed to get credentials for test-srv-02: %v", err)
 	}
@@ -311,6 +319,15 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 	}
 	if len(targets) != 2 {
 		t.Errorf("expected 2 targets in list, got %d", len(targets))
+	}
+
+	// Verify ListDestinations includes users
+	destinations, err := provider.ListDestinations(ctx)
+	if err != nil {
+		t.Fatalf("failed to list destinations: %v", err)
+	}
+	if len(destinations) != 2 {
+		t.Errorf("expected 2 destinations, got %d", len(destinations))
 	}
 }
 
@@ -370,27 +387,21 @@ func TestAddTarget(t *testing.T) {
 
 	info := TargetInfo{
 		ID:       "new-target",
-		Name:     "New Target",
-		Hostname: "192.168.2.100",
+		Hostname: "new-target",
+		IP:       "192.168.2.100",
 	}
-	creds := TargetCredentials{
-		Hostname: "192.168.2.100",
-		Port:     3389,
-		Username: "newuser",
-		Password: "newpass",
-		Domain:   "NEWDOMAIN",
+	users := []TargetUser{
+		{Username: "newuser", Password: "newpass"},
 	}
 
-	provider.AddTarget("new-target", info, creds)
+	provider.AddTarget("new-target", info, 3389, "NEWDOMAIN", users)
 
-	// Verify target was added
 	if provider.TargetCount() != initialCount+1 {
 		t.Errorf("expected %d targets, got %d", initialCount+1, provider.TargetCount())
 	}
 
-	// Verify we can retrieve the new target
 	ctx := context.Background()
-	retrieved, err := provider.GetTargetCredentials(ctx, "new-target")
+	retrieved, err := provider.GetTargetCredentials(ctx, "new-target", "newuser")
 	if err != nil {
 		t.Fatalf("failed to get new target: %v", err)
 	}
@@ -403,7 +414,6 @@ func TestRemoveTarget(t *testing.T) {
 	provider := NewMockProvider()
 	initialCount := provider.TargetCount()
 
-	// Remove existing target
 	removed := provider.RemoveTarget("dc-01")
 	if !removed {
 		t.Error("RemoveTarget should return true for existing target")
@@ -412,14 +422,12 @@ func TestRemoveTarget(t *testing.T) {
 		t.Errorf("expected %d targets, got %d", initialCount-1, provider.TargetCount())
 	}
 
-	// Verify target is gone
 	ctx := context.Background()
-	_, err := provider.GetTargetCredentials(ctx, "dc-01")
+	_, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 	if !errors.Is(err, ErrTargetNotFound) {
 		t.Errorf("expected ErrTargetNotFound, got: %v", err)
 	}
 
-	// Try to remove nonexistent target
 	removed = provider.RemoveTarget("nonexistent")
 	if removed {
 		t.Error("RemoveTarget should return false for nonexistent target")
@@ -436,7 +444,6 @@ func TestConcurrentAccess(t *testing.T) {
 	var wg sync.WaitGroup
 	errChan := make(chan error, numGoroutines*numOperations)
 
-	// Start multiple goroutines performing various operations
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(id int) {
@@ -444,25 +451,21 @@ func TestConcurrentAccess(t *testing.T) {
 			for j := 0; j < numOperations; j++ {
 				switch j % 4 {
 				case 0:
-					// Read credentials
-					_, err := provider.GetTargetCredentials(ctx, "dc-01")
+					_, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 					if err != nil && !errors.Is(err, ErrTargetNotFound) {
 						errChan <- err
 					}
 				case 1:
-					// List targets
 					_, err := provider.ListTargets(ctx)
 					if err != nil {
 						errChan <- err
 					}
 				case 2:
-					// Add a unique target
 					targetID := "concurrent-target"
-					info := TargetInfo{ID: targetID, Name: "Test", Hostname: "1.2.3.4"}
-					creds := TargetCredentials{Hostname: "1.2.3.4", Port: 3389}
-					provider.AddTarget(targetID, info, creds)
+					info := TargetInfo{ID: targetID, Hostname: "test", IP: "1.2.3.4"}
+					users := []TargetUser{{Username: "test", Password: "pass"}}
+					provider.AddTarget(targetID, info, 3389, "", users)
 				case 3:
-					// Remove the target we added
 					provider.RemoveTarget("concurrent-target")
 				}
 			}
@@ -472,13 +475,12 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 	close(errChan)
 
-	// Check for any errors
-	var errors []error
+	var errs []error
 	for err := range errChan {
-		errors = append(errors, err)
+		errs = append(errs, err)
 	}
-	if len(errors) > 0 {
-		t.Errorf("concurrent access produced %d errors, first: %v", len(errors), errors[0])
+	if len(errs) > 0 {
+		t.Errorf("concurrent access produced %d errors, first: %v", len(errs), errs[0])
 	}
 }
 
@@ -492,20 +494,18 @@ func TestConcurrentReads(t *testing.T) {
 	var wg sync.WaitGroup
 	errChan := make(chan error, numReaders)
 
-	// Start many readers simultaneously
 	for i := 0; i < numReaders; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < numReads; j++ {
-				creds, err := provider.GetTargetCredentials(ctx, "dc-01")
+				creds, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 				if err != nil {
 					errChan <- err
 					return
 				}
-				// Verify credentials are consistent
-				if creds.Hostname != "10.0.1.10" {
-					errChan <- errors.New("hostname mismatch during concurrent read")
+				if creds.IP != "10.0.1.10" {
+					errChan <- errors.New("ip mismatch during concurrent read")
 					return
 				}
 			}
@@ -515,7 +515,6 @@ func TestConcurrentReads(t *testing.T) {
 	wg.Wait()
 	close(errChan)
 
-	// Check for any errors
 	for err := range errChan {
 		t.Errorf("concurrent read error: %v", err)
 	}
@@ -525,29 +524,25 @@ func TestGetTargetCredentials_ReturnsCopy(t *testing.T) {
 	provider := NewMockProvider()
 	ctx := context.Background()
 
-	// Get credentials twice
-	creds1, err := provider.GetTargetCredentials(ctx, "dc-01")
+	creds1, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	creds2, err := provider.GetTargetCredentials(ctx, "dc-01")
+	creds2, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Modify the first result
-	originalHostname := creds1.Hostname
-	creds1.Hostname = "modified"
+	originalIP := creds1.IP
+	creds1.IP = "modified"
 
-	// Second result should not be affected
-	if creds2.Hostname != originalHostname {
+	if creds2.IP != originalIP {
 		t.Errorf("modifying returned credentials affected other calls")
 	}
 
-	// Getting credentials again should return original value
-	creds3, _ := provider.GetTargetCredentials(ctx, "dc-01")
-	if creds3.Hostname != originalHostname {
+	creds3, _ := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
+	if creds3.IP != originalIP {
 		t.Errorf("modifying returned credentials affected provider storage")
 	}
 }
