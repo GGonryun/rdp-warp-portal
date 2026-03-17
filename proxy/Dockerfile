@@ -14,6 +14,7 @@ FROM debian:sid-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         freerdp-proxy \
+        ffmpeg \
         openssl \
         curl \
         procps \
@@ -22,8 +23,8 @@ RUN apt-get update && \
 
 COPY --from=builder /rdp-broker /usr/local/bin/rdp-broker
 
-RUN mkdir -p /tmp/sessions /etc/rdp-broker/certs && \
-    chmod 700 /tmp/sessions
+RUN mkdir -p /tmp/sessions /etc/rdp-broker/certs /var/lib/p0rtal/recordings && \
+    chmod 700 /tmp/sessions /var/lib/p0rtal/recordings
 
 # Run as root for dev simplicity (use non-root user in production)
 # RUN useradd -r -s /bin/false rdpbroker && \
@@ -45,6 +46,7 @@ ENV API_PORT=8080 \
     MAX_CONCURRENT_SESSIONS=100 \
     SESSION_MAX_DURATION=8h \
     TOKEN_TTL=60s \
+    RECORDINGS_DIR=/var/lib/p0rtal/recordings \
     LOG_LEVEL=info \
     LOG_FORMAT=json
 
