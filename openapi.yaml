@@ -34,7 +34,7 @@ components:
 
     AccessRequest:
       type: object
-      required: [email, target_id]
+      required: [email, target_id, username]
       properties:
         email:
           type: string
@@ -45,6 +45,29 @@ components:
           type: string
           description: Target machine identifier
           example: "dc-01"
+        username:
+          type: string
+          description: Windows username on the target
+          example: "rdpadmin"
+
+    AccessStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [granted, revoked]
+          description: Result of the grant/revoke operation
+
+    ACLEntry:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        target_id:
+          type: string
+        username:
+          type: string
 
     HealthResponse:
       type: object
@@ -627,13 +650,27 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/access:
+    get:
+      summary: List all access grants
+      description: Returns all current ACL entries.
+      tags: [Access Control]
+      responses:
+        '200':
+          description: List of access grants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ACLEntry'
+
   /api/grant:
     post:
       summary: Grant access
       description: >-
-        Grants a user (identified by email) access to a specific target.
-        Access is stored persistently in Redis. Only available when the
-        broker is started with REDIS_URL configured.
+        Grants a user (identified by email) access to a specific target
+        with a given username.
       tags: [Access Control]
       requestBody:
         required: true
@@ -644,11 +681,22 @@ paths:
             example:
               email: "user@example.com"
               target_id: "dc-01"
+              username: "rdpadmin"
       responses:
-        '204':
+        '200':
           description: Access granted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessStatusResponse'
         '400':
-          description: Invalid request (missing email or target_id)
+          description: Invalid request (missing email, target_id, or username)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Access already exists
           content:
             application/json:
               schema:
@@ -670,11 +718,22 @@ paths:
             example:
               email: "user@example.com"
               target_id: "dc-01"
+              username: "rdpadmin"
       responses:
-        '204':
+        '200':
           description: Access revoked and active sessions terminated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessStatusResponse'
         '400':
-          description: Invalid request (missing email or target_id)
+          description: Invalid request (missing email, target_id, or username)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Access does not exist
           content:
             application/json:
               schema:

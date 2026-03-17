@@ -420,8 +420,9 @@
 </header>
 
 <div class="tab-nav">
-  <button class="active" onclick="switchTab('sessions')">Sessions</button>
-  <button onclick="switchTab('recordings')">Recordings</button>
+  <button class="active" data-tab="sessions" onclick="switchTab('sessions')">Sessions</button>
+  <button data-tab="recordings" onclick="switchTab('recordings')">Recordings</button>
+  <button data-tab="access" onclick="switchTab('access')">Access Control</button>
 </div>
 
 <div id="tab-sessions" class="tab-content active">
@@ -504,6 +505,33 @@
         <h3>Event Timeline</h3>
         <div class="events-list" id="events-list"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-access" class="tab-content">
+  <div class="card">
+    <div class="sessions-header">
+      <h2>Access Control</h2>
+      <button class="btn-sm btn-refresh" onclick="loadAccess()">Refresh</button>
+    </div>
+    <div style="margin-bottom:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:flex-end;">
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">Email</label>
+        <input id="grant-email" placeholder="user@example.com" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:200px;" />
+      </div>
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">Target ID</label>
+        <input id="grant-target" placeholder="dc-01" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:140px;" />
+      </div>
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">Username</label>
+        <input id="grant-username" placeholder="rdpadmin" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:140px;" />
+      </div>
+      <button class="btn btn-primary" onclick="grantAccess()" style="height:fit-content;">Grant</button>
+    </div>
+    <div id="access-container">
+      <div class="empty-state">No access grants found.</div>
     </div>
   </div>
 </div>
@@ -784,7 +812,7 @@
   function switchTab(tab) {
     activeTab = tab;
     document.querySelectorAll('.tab-nav button').forEach(btn => {
-      btn.classList.toggle('active', btn.textContent.toLowerCase() === tab);
+      btn.classList.toggle('active', btn.dataset.tab === tab);
     });
     document.querySelectorAll('.tab-content').forEach(el => {
       el.classList.toggle('active', el.id === 'tab-' + tab);
@@ -794,6 +822,9 @@
       startRecordingsAutoRefresh();
     } else {
       stopRecordingsAutoRefresh();
+    }
+    if (tab === 'access') {
+      loadAccess();
     }
   }
 
@@ -875,6 +906,99 @@
       container.innerHTML = html;
     } catch (e) {
       console.error('Failed to load recordings', e);
+    }
+  }
+
+  // Access Control
+  async function loadAccess() {
+    try {
+      const resp = await apiFetch(API + '/api/access');
+      const container = document.getElementById('access-container');
+      if (!resp.ok) {
+        const err = await resp.text();
+        console.error('Failed to load access:', resp.status, err);
+        container.innerHTML = '<div class="empty-state">Error loading access: ' + resp.status + '</div>';
+        return;
+      }
+      const entries = await resp.json();
+
+      if (!Array.isArray(entries) || entries.length === 0) {
+        container.innerHTML = '<div class="empty-state">No access grants found.</div>';
+        return;
+      }
+
+      let html = `<table>
+        <thead><tr>
+          <th>Email</th>
+          <th>Target</th>
+          <th>Username</th>
+          <th>Actions</th>
+        </tr></thead><tbody>`;
+
+      entries.forEach(e => {
+        html += `<tr>
+          <td>${e.email}</td>
+          <td class="mono">${e.target_id}</td>
+          <td>${e.username}</td>
+          <td class="actions">
+            <button class="btn-sm btn-danger" onclick="revokeAccess('${e.email}', '${e.target_id}', '${e.username}')">Revoke</button>
+          </td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch (e) {
+      console.error('Failed to load access', e);
+    }
+  }
+
+  async function grantAccess() {
+    const email = document.getElementById('grant-email').value.trim();
+    const targetId = document.getElementById('grant-target').value.trim();
+    const username = document.getElementById('grant-username').value.trim();
+    if (!email || !targetId || !username) {
+      toast('All fields are required', 'error');
+      return;
+    }
+    try {
+      const resp = await apiFetch(API + '/api/grant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, target_id: targetId, username })
+      });
+      if (resp.ok) {
+        toast('Access granted to ' + email);
+        document.getElementById('grant-email').value = '';
+        document.getElementById('grant-target').value = '';
+        document.getElementById('grant-username').value = '';
+        loadAccess();
+      } else {
+        const err = await resp.json();
+        toast(err.message || 'Failed to grant access', 'error');
+      }
+    } catch (e) {
+      toast('Failed to grant access', 'error');
+    }
+  }
+
+  async function revokeAccess(email, targetId, username) {
+    if (!confirm('Revoke access for ' + email + ' on ' + targetId + '? Active sessions will be terminated.')) return;
+    try {
+      const resp = await apiFetch(API + '/api/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, target_id: targetId, username })
+      });
+      if (resp.ok) {
+        toast('Access revoked for ' + email);
+        loadAccess();
+      } else {
+        const err = await resp.json();
+        toast(err.message || 'Failed to revoke access', 'error');
+      }
+    } catch (e) {
+      toast('Failed to revoke access', 'error');
     }
   }
 

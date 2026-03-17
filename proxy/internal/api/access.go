@@ -23,8 +23,22 @@ func NewAccessHandler(store acl.Store, manager *session.Manager) *AccessHandler 
 
 // RegisterRoutes registers the grant/revoke routes.
 func (h *AccessHandler) RegisterRoutes(router *Router) {
+	router.HandleFunc("GET /api/access", h.listAccess, false)
 	router.HandleFunc("POST /api/grant", h.grantAccess, false)
 	router.HandleFunc("POST /api/revoke", h.revokeAccess, false)
+}
+
+func (h *AccessHandler) listAccess(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.aclStore.ListAll(r.Context())
+	if err != nil {
+		slog.Error("failed to list access", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list access")
+		return
+	}
+	if entries == nil {
+		entries = []acl.ACLEntry{}
+	}
+	writeJSON(w, http.StatusOK, entries)
 }
 
 type accessRequest struct {
@@ -52,6 +66,18 @@ func (h *AccessHandler) grantAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if access already exists (idempotent).
+	already, err := h.aclStore.HasAccess(r.Context(), req.Email, req.TargetID, req.Username)
+	if err != nil {
+		slog.Error("failed to check access", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to check access")
+		return
+	}
+	if already {
+		writeError(w, http.StatusConflict, "access already exists")
+		return
+	}
+
 	if err := h.aclStore.GrantAccess(r.Context(), req.Email, req.TargetID, req.Username); err != nil {
 		slog.Error("failed to grant access", "error", err, "email", req.Email, "target_id", req.TargetID, "username", req.Username)
 		writeError(w, http.StatusInternalServerError, "failed to grant access")
@@ -59,7 +85,7 @@ func (h *AccessHandler) grantAccess(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("access granted", "email", req.Email, "target_id", req.TargetID, "username", req.Username)
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "granted"})
 }
 
 func (h *AccessHandler) revokeAccess(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +104,18 @@ func (h *AccessHandler) revokeAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Username == "" {
 		writeError(w, http.StatusBadRequest, "username is required")
+		return
+	}
+
+	// Check if access exists before revoking (idempotent).
+	exists, err := h.aclStore.HasAccess(r.Context(), req.Email, req.TargetID, req.Username)
+	if err != nil {
+		slog.Error("failed to check access", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to check access")
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "access does not exist")
 		return
 	}
 
@@ -108,7 +146,7 @@ func (h *AccessHandler) revokeAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
 func validEmail(email string) bool {
