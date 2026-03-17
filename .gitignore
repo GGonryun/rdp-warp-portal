@@ -6,7 +6,7 @@
 .env
 proxy/targets.json
 targets.json
-.targets.json
+config.json
 *.rdp
 
 # Build artifacts
