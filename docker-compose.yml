@@ -10,6 +10,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./proxy/targets.json:/etc/rdp-broker/targets.json:ro
+      - ./web:/usr/share/p0rtal/web:ro
       - recordings:/var/lib/p0rtal/recordings
     restart: unless-stopped
     healthcheck:
@@ -18,18 +19,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-
-  web:
-    image: nginx:alpine
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./web/index.html:/usr/share/nginx/html/index.html:ro
-      - ./web/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      broker:
-        condition: service_healthy
-    restart: unless-stopped
 
 volumes:
   recordings:

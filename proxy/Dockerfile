@@ -23,7 +23,7 @@ RUN apt-get update && \
 
 COPY --from=builder /rdp-broker /usr/local/bin/rdp-broker
 
-RUN mkdir -p /tmp/sessions /etc/rdp-broker/certs /var/lib/p0rtal/recordings && \
+RUN mkdir -p /tmp/sessions /etc/rdp-broker/certs /var/lib/p0rtal/recordings /usr/share/p0rtal/web && \
     chmod 700 /tmp/sessions /var/lib/p0rtal/recordings
 
 # Run as root for dev simplicity (use non-root user in production)
@@ -47,6 +47,7 @@ ENV API_PORT=8080 \
     SESSION_MAX_DURATION=8h \
     TOKEN_TTL=60s \
     RECORDINGS_DIR=/var/lib/p0rtal/recordings \
+    WEB_DIR=/usr/share/p0rtal/web \
     LOG_LEVEL=info \
     LOG_FORMAT=json
 
