@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/p0-security/rdp-broker/internal/recording"
@@ -32,6 +34,8 @@ func (h *RecordingsHandler) RegisterRoutes(router *Router) {
 	router.HandleFunc("GET /api/recordings/{id}", h.getRecording, false)
 	router.HandleFunc("GET /api/recordings/{id}/video", h.streamVideo, false)
 	router.HandleFunc("GET /api/recordings/{id}/events", h.getEvents, false)
+	router.HandleFunc("GET /api/recordings/{id}/hls/playlist.m3u8", h.hlsPlaylist, false)
+	router.HandleFunc("GET /api/recordings/{id}/hls/segments/{segment}", h.hlsSegment, false)
 }
 
 type CreateRecordingRequest struct {
@@ -188,6 +192,41 @@ func (h *RecordingsHandler) getEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, events)
+}
+
+func (h *RecordingsHandler) hlsPlaylist(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	playlist, err := h.store.GeneratePlaylist(id, 30)
+	if err != nil {
+		if errors.Is(err, recording.ErrRecordingNotFound) {
+			writeError(w, http.StatusNotFound, "recording not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(playlist)
+}
+
+func (h *RecordingsHandler) hlsSegment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	segment := r.PathValue("segment")
+
+	// Parse segment index from filename like "000.ts"
+	name := strings.TrimSuffix(segment, ".ts")
+	index, err := strconv.Atoi(name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid segment name")
+		return
+	}
+
+	path := h.store.ChunkPath(id, index)
+	w.Header().Set("Content-Type", "video/mp2t")
+	http.ServeFile(w, r, path)
 }
 
 func randomHex(n int) string {

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>p0rtal — RDP Proxy Tester</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <style>
     :root {
       --bg: #0f1117;
@@ -630,8 +631,7 @@
   // List sessions
   async function loadSessions() {
     try {
-      const userId = getUserId();
-      const resp = await apiFetch(API + '/api/sessions?user_id=' + encodeURIComponent(userId));
+      const resp = await apiFetch(API + '/api/sessions?user_id=');
       const sessions = await resp.json();
       const container = document.getElementById('sessions-container');
 
@@ -642,7 +642,7 @@
 
       // Sort: active first, then by created_at desc
       sessions.sort((a, b) => {
-        const stateOrder = { waiting_for_connection: 0, active: 0, connected: 0, error: 1, terminated: 2, expired: 2 };
+        const stateOrder = { creating: 0, active: 0, connected: 0, terminating: 1, terminated: 2, expired: 2 };
         const sa = stateOrder[a.state] ?? 1;
         const sb = stateOrder[b.state] ?? 1;
         if (sa !== sb) return sa - sb;
@@ -652,22 +652,22 @@
       let html = `<table>
         <thead><tr>
           <th>Session ID</th>
+          <th>User</th>
           <th>Target</th>
           <th>Port</th>
           <th>State</th>
-          <th>PID</th>
           <th>Created</th>
           <th>Actions</th>
         </tr></thead><tbody>`;
 
       sessions.forEach(s => {
-        const isActive = ['waiting_for_connection', 'active', 'connected'].includes(s.state);
-        html += `<tr>
+        const isActive = ['creating', 'active', 'connected'].includes(s.state);
+        html += `<tr style="${!isActive ? 'opacity:0.55' : ''}">
           <td class="mono" title="${s.session_id}">${shortId(s.session_id)}</td>
+          <td>${s.user_id || '—'}</td>
           <td>${s.target_id}</td>
           <td class="mono">${s.proxy_port || '—'}</td>
           <td><span class="state ${stateClass(s.state)}">${s.state}</span></td>
-          <td class="mono">${s.pid || '—'}</td>
           <td>${relativeTime(s.created_at)}</td>
           <td class="actions">
             ${isActive ? `<button class="btn-sm btn-download" onclick="downloadRDP('${s.session_id}')">RDP</button>` : ''}
@@ -875,6 +875,7 @@
   // Playback
   let playbackEvents = [];
   let playbackStartTime = 0;
+  let hlsInstance = null;
 
   function openPlayback(recordingId, startedAt) {
     stopRecordingsAutoRefresh();
@@ -882,8 +883,41 @@
     document.getElementById('recordings-playback-view').style.display = 'block';
 
     const video = document.getElementById('playback-video');
-    video.src = API + '/api/recordings/' + recordingId + '/video';
-    video.load();
+    const hlsUrl = API + '/api/recordings/' + recordingId + '/hls/playlist.m3u8';
+
+    // Clean up previous HLS instance
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+
+    if (Hls.isSupported()) {
+      hlsInstance = new Hls({
+        liveDurationInfinity: true,
+        manifestLoadingTimeOut: 10000,
+        manifestLoadingMaxRetry: 6,
+        levelLoadingTimeOut: 10000,
+        xhrSetup: function(xhr) {
+          const key = getApiKey();
+          if (key) xhr.setRequestHeader('Authorization', 'Bearer ' + key);
+        }
+      });
+      hlsInstance.loadSource(hlsUrl);
+      hlsInstance.attachMedia(video);
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
+        video.play().catch(() => {});
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS support (Safari)
+      video.src = hlsUrl;
+      video.addEventListener('loadedmetadata', function() {
+        video.play().catch(() => {});
+      }, { once: true });
+    } else {
+      // Fallback to direct video
+      video.src = API + '/api/recordings/' + recordingId + '/video';
+      video.load();
+    }
 
     playbackStartTime = startedAt ? new Date(startedAt).getTime() : 0;
     playbackEvents = [];
@@ -898,6 +932,12 @@
   function closePlayback() {
     const video = document.getElementById('playback-video');
     video.pause();
+
+    if (hlsInstance) {
+      hlsInstance.destroy();
+      hlsInstance = null;
+    }
+
     video.removeAttribute('src');
     video.load();
 

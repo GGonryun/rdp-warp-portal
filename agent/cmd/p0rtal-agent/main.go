@@ -58,6 +58,31 @@ func main() {
 	// Create API client.
 	apiClient := client.New(cfg.ProxyURL, cfg.APIKey)
 
+	// Verify broker connectivity before starting.
+	slog.Info("connecting to broker...", "proxy_url", cfg.ProxyURL)
+	{
+		delays := []time.Duration{1, 2, 4, 8, 15, 30}
+		var lastErr error
+		for attempt := 0; ; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			lastErr = apiClient.HealthCheck(ctx)
+			cancel()
+			if lastErr == nil {
+				slog.Info("broker connection established")
+				break
+			}
+			if attempt >= len(delays) {
+				slog.Error("failed to connect to broker after retries", "error", lastErr)
+				os.Exit(1)
+			}
+			slog.Warn("broker not reachable, retrying...",
+				"error", lastErr,
+				"retry_in", delays[attempt].String()+"s",
+			)
+			time.Sleep(delays[attempt] * time.Second)
+		}
+	}
+
 	// Track active recorders by session ID.
 	var mu sync.Mutex
 	recorders := make(map[uint32]*capture.Recorder)

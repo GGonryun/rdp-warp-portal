@@ -75,6 +75,7 @@ type ManagerConfig struct {
 type Manager struct {
 	mu           sync.RWMutex
 	sessions     map[string]*Session
+	history      []*Session // terminated sessions kept for listing
 	provider     credential.CredentialProvider
 	portPool     *PortPool
 	configWriter *ConfigWriter
@@ -319,12 +320,13 @@ func (m *Manager) TerminateSession(ctx context.Context, sessionID string) error 
 	// Cleanup session directory
 	m.configWriter.CleanupSession(sessionID)
 
-	// Update state and remove from map
+	// Update state, move to history, and remove from active map
 	m.mu.Lock()
 	session.mu.Lock()
 	session.State = StateTerminated
 	session.mu.Unlock()
 	delete(m.sessions, sessionID)
+	m.history = append(m.history, session)
 	m.mu.Unlock()
 
 	m.logger.Info("session terminated",
@@ -349,13 +351,20 @@ func (m *Manager) GetSession(sessionID string) (*Session, error) {
 	return session, nil
 }
 
-// ListSessions returns all sessions for a user (or all sessions if userID is empty).
+// ListSessions returns all sessions (active + terminated) for a user (or all if userID is empty).
 func (m *Manager) ListSessions(userID string) []*Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	var sessions []*Session
+	// Active sessions
 	for _, s := range m.sessions {
+		if userID == "" || s.UserID == userID {
+			sessions = append(sessions, s)
+		}
+	}
+	// Terminated sessions from history
+	for _, s := range m.history {
 		if userID == "" || s.UserID == userID {
 			sessions = append(sessions, s)
 		}

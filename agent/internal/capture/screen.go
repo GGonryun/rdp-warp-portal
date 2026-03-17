@@ -44,7 +44,7 @@ func (s *ScreenRecorder) Start(ctx context.Context) error {
 
 	ctx, s.cancel = context.WithCancel(ctx)
 
-	outputPattern := filepath.Join(s.outputDir, "chunk_%03d.mp4")
+	outputPattern := filepath.Join(s.outputDir, "chunk_%03d.ts")
 
 	s.cmd = exec.CommandContext(ctx, s.ffmpegPath,
 		"-f", "gdigrab",
@@ -56,6 +56,7 @@ func (s *ScreenRecorder) Start(ctx context.Context) error {
 		"-pix_fmt", "yuv420p",
 		"-f", "segment",
 		"-segment_time", fmt.Sprintf("%d", s.chunkSecs),
+		"-segment_format", "mpegts",
 		"-reset_timestamps", "1",
 		outputPattern,
 	)
@@ -176,7 +177,7 @@ func (s *ScreenRecorder) listChunks() []string {
 
 	var chunks []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".mp4") {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".ts") {
 			chunks = append(chunks, filepath.Join(s.outputDir, e.Name()))
 		}
 	}
