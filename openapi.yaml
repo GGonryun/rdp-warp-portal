@@ -32,6 +32,20 @@ components:
           type: string
           example: target not found
 
+    AccessRequest:
+      type: object
+      required: [email, target_id]
+      properties:
+        email:
+          type: string
+          format: email
+          description: User email address (principal identifier)
+          example: "user@example.com"
+        target_id:
+          type: string
+          description: Target machine identifier
+          example: "dc-01"
+
     HealthResponse:
       type: object
       properties:
@@ -608,6 +622,59 @@ paths:
                 format: binary
         '404':
           description: Recording or video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/grant:
+    post:
+      summary: Grant access
+      description: >-
+        Grants a user (identified by email) access to a specific target.
+        Access is stored persistently in Redis. Only available when the
+        broker is started with REDIS_URL configured.
+      tags: [Access Control]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessRequest'
+            example:
+              email: "user@example.com"
+              target_id: "dc-01"
+      responses:
+        '204':
+          description: Access granted
+        '400':
+          description: Invalid request (missing email or target_id)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/revoke:
+    post:
+      summary: Revoke access
+      description: >-
+        Revokes a user's access to a specific target and terminates any
+        active sessions that user has on that target.
+      tags: [Access Control]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessRequest'
+            example:
+              email: "user@example.com"
+              target_id: "dc-01"
+      responses:
+        '204':
+          description: Access revoked and active sessions terminated
+        '400':
+          description: Invalid request (missing email or target_id)
           content:
             application/json:
               schema:

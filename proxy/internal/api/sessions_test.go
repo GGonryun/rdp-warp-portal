@@ -124,7 +124,7 @@ func TestSessionsHandler_CreateSession_Success(t *testing.T) {
 		return testSession, nil
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
@@ -158,7 +158,7 @@ func TestSessionsHandler_CreateSession_Success(t *testing.T) {
 
 func TestSessionsHandler_CreateSession_InvalidJSON(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -182,7 +182,7 @@ func TestSessionsHandler_CreateSession_InvalidJSON(t *testing.T) {
 
 func TestSessionsHandler_CreateSession_MissingTargetID(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	body := `{"user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
@@ -211,7 +211,7 @@ func TestSessionsHandler_CreateSession_TargetNotFound(t *testing.T) {
 		return nil, credential.ErrTargetNotFound
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	body := `{"target_id": "nonexistent", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
@@ -231,7 +231,7 @@ func TestSessionsHandler_CreateSession_SessionLimitReached(t *testing.T) {
 		return nil, session.ErrSessionLimitReached
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
@@ -251,7 +251,7 @@ func TestSessionsHandler_CreateSession_ProviderUnavailable(t *testing.T) {
 		return nil, session.ErrProviderUnavailable
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
@@ -271,7 +271,7 @@ func TestSessionsHandler_CreateSession_InternalError(t *testing.T) {
 		return nil, errors.New("unexpected error")
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
@@ -287,7 +287,7 @@ func TestSessionsHandler_CreateSession_InternalError(t *testing.T) {
 
 func TestSessionsHandler_CreateSession_MissingUsername(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	body := `{"target_id": "target-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
@@ -309,7 +309,7 @@ func TestSessionsHandler_CreateSession_AnonymousUser(t *testing.T) {
 		return createTestSession("sess-123", userID, targetID), nil
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	// No user_id in body, no JWT context, but username is provided
 	body := `{"target_id": "target-1", "username": "admin"}`
@@ -335,7 +335,7 @@ func TestSessionsHandler_ListSessions_Success(t *testing.T) {
 	mock.sessions["sess-1"] = sess1
 	mock.sessions["sess-2"] = sess2
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions?user_id=user-1", nil)
 	rec := httptest.NewRecorder()
@@ -358,7 +358,7 @@ func TestSessionsHandler_ListSessions_Success(t *testing.T) {
 
 func TestSessionsHandler_ListSessions_Empty(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions?user_id=user-1", nil)
 	rec := httptest.NewRecorder()
@@ -384,7 +384,7 @@ func TestSessionsHandler_ListSessions_FromJWTContext(t *testing.T) {
 	sess := createTestSession("sess-1", "jwt-user", "target-1")
 	mock.sessions["sess-1"] = sess
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	// Create request with user ID in context (simulating JWT auth)
 	req := httptest.NewRequest("GET", "/api/sessions", nil)
@@ -416,7 +416,7 @@ func TestSessionsHandler_ListSessions_NoFilter(t *testing.T) {
 		return []*session.Session{}
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	// No user_id in query, no JWT context — should list all sessions
 	req := httptest.NewRequest("GET", "/api/sessions", nil)
@@ -441,7 +441,7 @@ func TestSessionsHandler_GetSession_Success(t *testing.T) {
 	sess.ConnectedAt = &connAt
 	mock.sessions["sess-123"] = sess
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/sess-123", nil)
 	req.SetPathValue("id", "sess-123")
@@ -477,7 +477,7 @@ func TestSessionsHandler_GetSession_Success(t *testing.T) {
 
 func TestSessionsHandler_GetSession_NotFound(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/nonexistent", nil)
 	req.SetPathValue("id", "nonexistent")
@@ -492,7 +492,7 @@ func TestSessionsHandler_GetSession_NotFound(t *testing.T) {
 
 func TestSessionsHandler_GetSession_MissingID(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/", nil)
 	// No path value set
@@ -511,7 +511,7 @@ func TestSessionsHandler_GetSession_InternalError(t *testing.T) {
 		return nil, errors.New("database error")
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/sess-123", nil)
 	req.SetPathValue("id", "sess-123")
@@ -528,7 +528,7 @@ func TestSessionsHandler_DeleteSession_Success(t *testing.T) {
 	mock := newMockManager()
 	mock.sessions["sess-123"] = createTestSession("sess-123", "user-1", "target-1")
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("DELETE", "/api/sessions/sess-123", nil)
 	req.SetPathValue("id", "sess-123")
@@ -548,7 +548,7 @@ func TestSessionsHandler_DeleteSession_Success(t *testing.T) {
 
 func TestSessionsHandler_DeleteSession_NotFound(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("DELETE", "/api/sessions/nonexistent", nil)
 	req.SetPathValue("id", "nonexistent")
@@ -563,7 +563,7 @@ func TestSessionsHandler_DeleteSession_NotFound(t *testing.T) {
 
 func TestSessionsHandler_DeleteSession_MissingID(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("DELETE", "/api/sessions/", nil)
 	// No path value set
@@ -582,7 +582,7 @@ func TestSessionsHandler_DeleteSession_InternalError(t *testing.T) {
 		return errors.New("termination failed")
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("DELETE", "/api/sessions/sess-123", nil)
 	req.SetPathValue("id", "sess-123")
@@ -600,7 +600,7 @@ func TestSessionsHandler_DownloadRDPFile_Success(t *testing.T) {
 	sess := createTestSession("sess-123", "user-1", "target-1")
 	mock.sessions["sess-123"] = sess
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/sess-123/rdp", nil)
 	req.SetPathValue("id", "sess-123")
@@ -629,7 +629,7 @@ func TestSessionsHandler_DownloadRDPFile_Success(t *testing.T) {
 
 func TestSessionsHandler_DownloadRDPFile_NotFound(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/nonexistent/rdp", nil)
 	req.SetPathValue("id", "nonexistent")
@@ -644,7 +644,7 @@ func TestSessionsHandler_DownloadRDPFile_NotFound(t *testing.T) {
 
 func TestSessionsHandler_DownloadRDPFile_MissingID(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions//rdp", nil)
 	// No path value set
@@ -665,7 +665,7 @@ func TestSessionsHandler_DownloadRDPFile_GenerateError(t *testing.T) {
 		return nil, errors.New("generation failed")
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/sess-123/rdp", nil)
 	req.SetPathValue("id", "sess-123")
@@ -684,7 +684,7 @@ func TestSessionsHandler_DownloadRDPFile_GetSessionInternalError(t *testing.T) {
 		return nil, errors.New("database error")
 	}
 
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	req := httptest.NewRequest("GET", "/api/sessions/sess-123/rdp", nil)
 	req.SetPathValue("id", "sess-123")
@@ -699,7 +699,7 @@ func TestSessionsHandler_DownloadRDPFile_GetSessionInternalError(t *testing.T) {
 
 func TestSessionsHandler_RegisterRoutes(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 	router := NewRouter("test-secret", nil)
 
 	// Should not panic
@@ -889,7 +889,7 @@ func TestSessionToResponse_MinimalSession(t *testing.T) {
 
 func TestNewSessionsHandler(t *testing.T) {
 	mock := newMockManager()
-	handler := NewSessionsHandler(mock, "broker.local")
+	handler := NewSessionsHandler(mock, "broker.local", nil)
 
 	if handler == nil {
 		t.Fatal("NewSessionsHandler returned nil")

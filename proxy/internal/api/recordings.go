@@ -39,12 +39,12 @@ func (h *RecordingsHandler) RegisterRoutes(router *Router) {
 }
 
 type CreateRecordingRequest struct {
-	SessionID     string `json:"sessionId"`
-	TargetID      string `json:"targetId"`
-	TargetName    string `json:"targetName"`
-	WindowsUser   string `json:"windowsUser"`
-	ProxyUser     string `json:"proxyUser"`
-	AgentHostname string `json:"agentHostname"`
+	SessionID     string `json:"session_id"`
+	TargetID      string `json:"target_id"`
+	TargetName    string `json:"target_name"`
+	WindowsUser   string `json:"windows_user"`
+	ProxyUser     string `json:"proxy_user"`
+	AgentHostname string `json:"agent_hostname"`
 }
 
 func (h *RecordingsHandler) createRecording(w http.ResponseWriter, r *http.Request) {

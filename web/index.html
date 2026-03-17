@@ -832,10 +832,16 @@
   async function loadRecordings() {
     try {
       const resp = await apiFetch(API + '/api/recordings');
-      const recordings = await resp.json();
       const container = document.getElementById('recordings-container');
+      if (!resp.ok) {
+        const err = await resp.text();
+        console.error('Failed to load recordings:', resp.status, err);
+        container.innerHTML = '<div class="empty-state">Error loading recordings: ' + resp.status + '</div>';
+        return;
+      }
+      const recordings = await resp.json();
 
-      if (!recordings || recordings.length === 0) {
+      if (!Array.isArray(recordings) || recordings.length === 0) {
         container.innerHTML = '<div class="empty-state">No recordings found.</div>';
         return;
       }

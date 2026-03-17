@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/p0-security/rdp-broker/internal/acl"
 	"github.com/p0-security/rdp-broker/internal/credential"
 	"github.com/p0-security/rdp-broker/internal/session"
 )
@@ -29,13 +30,15 @@ type SessionManager interface {
 type SessionsHandler struct {
 	manager    SessionManager
 	brokerHost string
+	aclStore   acl.Store // nil means ACL enforcement disabled
 }
 
 // NewSessionsHandler creates a new sessions handler.
-func NewSessionsHandler(manager SessionManager, brokerHost string) *SessionsHandler {
+func NewSessionsHandler(manager SessionManager, brokerHost string, aclStore acl.Store) *SessionsHandler {
 	return &SessionsHandler{
 		manager:    manager,
 		brokerHost: brokerHost,
+		aclStore:   aclStore,
 	}
 }
 
@@ -106,6 +109,20 @@ func (h *SessionsHandler) CreateSession(w http.ResponseWriter, r *http.Request) 
 	}
 	if userID == "" {
 		userID = "anonymous" // Default for dev mode
+	}
+
+	// Check ACL if enforcement is enabled.
+	if h.aclStore != nil {
+		ok, err := h.aclStore.HasAccess(r.Context(), userID, req.TargetID, req.Username)
+		if err != nil {
+			slog.Error("acl check failed", "error", err, "user_id", userID, "target_id", req.TargetID, "username", req.Username)
+			writeError(w, http.StatusInternalServerError, "access check failed")
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusForbidden, "access not granted")
+			return
+		}
 	}
 
 	// Extract client IP for session binding

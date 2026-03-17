@@ -143,7 +143,7 @@ func (s *ScreenRecorder) watchChunks(ctx context.Context) {
 			// The last chunk in the sorted list is still being written to.
 			// Report all completed chunks (all except the last).
 			for _, chunk := range chunks[:len(chunks)-1] {
-				if chunk != lastReported {
+				if chunk > lastReported {
 					slog.Info("chunk ready", "path", chunk)
 					if s.onChunk != nil {
 						s.onChunk(chunk)
