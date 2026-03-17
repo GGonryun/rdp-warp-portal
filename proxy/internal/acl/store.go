@@ -12,12 +12,20 @@ type Grant struct {
 	Username string
 }
 
+// ACLEntry is a flattened representation of a grant for API responses.
+type ACLEntry struct {
+	Email    string `json:"email"`
+	TargetID string `json:"target_id"`
+	Username string `json:"username"`
+}
+
 // Store defines the interface for an access control list.
 // Implementations may be backed by an in-memory map, Redis, a database, etc.
 type Store interface {
 	GrantAccess(ctx context.Context, email, targetID, username string) error
 	RevokeAccess(ctx context.Context, email, targetID, username string) error
 	HasAccess(ctx context.Context, email, targetID, username string) (bool, error)
+	ListAll(ctx context.Context) ([]ACLEntry, error)
 }
 
 // MemoryStore is an in-memory implementation of Store.
@@ -78,6 +86,23 @@ func (s *MemoryStore) HasAccess(_ context.Context, email, targetID, username str
 	}
 	_, has := grants[grant]
 	return has, nil
+}
+
+func (s *MemoryStore) ListAll(_ context.Context) ([]ACLEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var entries []ACLEntry
+	for email, grants := range s.entries {
+		for g := range grants {
+			entries = append(entries, ACLEntry{
+				Email:    email,
+				TargetID: g.TargetID,
+				Username: g.Username,
+			})
+		}
+	}
+	return entries, nil
 }
 
 func normalizeEmail(email string) string {
