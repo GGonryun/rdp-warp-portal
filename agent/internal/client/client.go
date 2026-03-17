@@ -196,7 +196,7 @@ func (c *Client) SendEvents(ctx context.Context, recordingID string, events []Re
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("send events failed with status %d: %s", resp.StatusCode, string(respBody))
 	}
@@ -207,7 +207,7 @@ func (c *Client) SendEvents(ctx context.Context, recordingID string, events []Re
 // EndRecording signals the end of a recording.
 func (c *Client) EndRecording(ctx context.Context, recordingID string) error {
 	path := fmt.Sprintf("/api/recordings/%s/end", recordingID)
-	httpReq, err := c.newRequest(ctx, http.MethodPost, path, nil)
+	httpReq, err := c.newRequest(ctx, http.MethodPut, path, nil)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
