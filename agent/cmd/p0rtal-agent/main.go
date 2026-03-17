@@ -13,6 +13,7 @@ import (
 	"github.com/p0-security/p0rtal-agent/internal/capture"
 	"github.com/p0-security/p0rtal-agent/internal/client"
 	"github.com/p0-security/p0rtal-agent/internal/config"
+	"github.com/p0-security/p0rtal-agent/internal/ffmpeg"
 	"github.com/p0-security/p0rtal-agent/internal/session"
 )
 
@@ -36,6 +37,15 @@ func main() {
 		slog.Error("proxy_url is required (set in config file or PROXY_URL env var)")
 		os.Exit(1)
 	}
+
+	// Ensure ffmpeg is available (downloads if missing).
+	ffmpegPath, err := ffmpeg.EnsureInstalled(cfg.FfmpegPath)
+	if err != nil {
+		slog.Error("ffmpeg is required but could not be found or installed", "error", err)
+		os.Exit(1)
+	}
+	cfg.FfmpegPath = ffmpegPath
+
 	hostname, _ := os.Hostname()
 	slog.Info("p0rtal agent starting",
 		"hostname", hostname,
@@ -46,7 +56,7 @@ func main() {
 	)
 
 	// Create API client.
-	apiClient := client.New(cfg.ProxyURL)
+	apiClient := client.New(cfg.ProxyURL, cfg.APIKey)
 
 	// Track active recorders by session ID.
 	var mu sync.Mutex

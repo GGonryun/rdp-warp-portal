@@ -9,6 +9,7 @@ import (
 // Config holds the agent configuration.
 type Config struct {
 	ProxyURL     string `json:"proxy_url"`     // e.g. "http://broker:8080"
+	APIKey       string `json:"api_key"`       // Bearer token for broker API auth
 	FfmpegPath   string `json:"ffmpeg_path"`   // path to ffmpeg binary, default "ffmpeg"
 	Framerate    int    `json:"framerate"`     // capture framerate, default 5
 	ChunkSecs    int    `json:"chunk_secs"`    // segment duration seconds, default 30
@@ -50,6 +51,7 @@ func Load(path string) (*Config, error) {
 func LoadFromEnv() *Config {
 	cfg := &Config{
 		ProxyURL:   os.Getenv("PROXY_URL"),
+		APIKey:     os.Getenv("API_KEY"),
 		FfmpegPath: os.Getenv("FFMPEG_PATH"),
 	}
 

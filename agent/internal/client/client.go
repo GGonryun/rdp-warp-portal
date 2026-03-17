@@ -14,13 +14,15 @@ import (
 // Client is an HTTP client for the proxy recording API.
 type Client struct {
 	baseURL    string
+	apiKey     string
 	httpClient *http.Client
 }
 
 // New creates a new API client.
-func New(baseURL string) *Client {
+func New(baseURL, apiKey string) *Client {
 	return &Client{
 		baseURL: baseURL,
+		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -87,9 +89,16 @@ func (c *Client) doWithRetry(ctx context.Context, req *http.Request) (*http.Resp
 	return nil, fmt.Errorf("request failed after 3 attempts: %w", lastErr)
 }
 
-// newRequest creates an HTTP request.
+// newRequest creates an HTTP request with auth header if configured.
 func (c *Client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
-	return http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	return req, nil
 }
 
 // CreateRecording creates a new recording on the server.
