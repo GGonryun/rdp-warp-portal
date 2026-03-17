@@ -18,6 +18,7 @@ import (
 	"github.com/p0-security/rdp-broker/internal/certs"
 	"github.com/p0-security/rdp-broker/internal/config"
 	"github.com/p0-security/rdp-broker/internal/credential"
+	"github.com/p0-security/rdp-broker/internal/recording"
 	"github.com/p0-security/rdp-broker/internal/session"
 )
 
@@ -116,6 +117,10 @@ func main() {
 
 	healthHandler := api.NewHealthHandler(manager)
 	healthHandler.RegisterRoutes(router)
+
+	recordingStore := recording.NewStore(cfg.RecordingsDir)
+	recordingsHandler := api.NewRecordingsHandler(recordingStore)
+	recordingsHandler.RegisterRoutes(router)
 
 	// Create HTTP server
 	server := &http.Server{

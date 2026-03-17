@@ -269,8 +269,137 @@
       letter-spacing: 0.05em;
     }
 
+    /* Tab navigation */
+    .tab-nav {
+      display: flex;
+      gap: 2rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .tab-nav button {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      font-size: 0.95rem;
+      font-weight: 500;
+      padding: 0.5rem 0;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .tab-nav button:hover { color: var(--text); }
+    .tab-nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Recordings state badges */
+    .state-recording { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .state-completed { background: rgba(99, 102, 241, 0.15); color: var(--accent); }
+    .state-failed { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+
+    .btn-play {
+      background: var(--accent);
+      color: white;
+    }
+    .btn-play:hover { background: var(--accent-hover); }
+
+    .btn-back {
+      background: var(--border);
+      color: var(--text);
+      margin-bottom: 1rem;
+    }
+    .btn-back:hover { background: #3a3d4a; }
+
+    /* Playback view */
+    .playback-view {
+      display: flex;
+      gap: 1rem;
+      height: calc(100vh - 12rem);
+    }
+
+    .playback-video {
+      flex: 0 0 70%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .playback-video video {
+      width: 100%;
+      flex: 1;
+      background: #000;
+      border-radius: 8px;
+    }
+
+    .playback-events {
+      flex: 0 0 30%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .playback-events h3 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    .events-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .event-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.6rem 0.75rem;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    .event-card:hover { border-color: var(--accent); }
+    .event-card.active { border-color: var(--accent); background: rgba(99, 102, 241, 0.08); }
+
+    .event-time {
+      font-size: 0.7rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .event-type {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.7rem;
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+
+    .event-type-process_start { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .event-type-process_end { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+    .event-type-window_focus { background: rgba(99, 102, 241, 0.15); color: var(--accent); }
+
+    .event-detail {
+      font-size: 0.78rem;
+      color: var(--text);
+      word-break: break-word;
+    }
+
     @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
+      .playback-view { flex-direction: column; height: auto; }
+      .playback-video, .playback-events { flex: 1 1 auto; }
+      .playback-events { max-height: 40vh; }
     }
   </style>
 </head>
@@ -284,54 +413,85 @@
   </div>
 </header>
 
-<div class="grid">
-  <!-- Left panel: Create session -->
-  <div>
-    <div class="card" style="margin-bottom: 1.5rem;">
-      <h2>Broker Status</h2>
-      <div class="stats">
-        <div class="stat">
-          <div class="stat-value" id="stat-sessions">—</div>
-          <div class="stat-label">Active Sessions</div>
+<div class="tab-nav">
+  <button class="active" onclick="switchTab('sessions')">Sessions</button>
+  <button onclick="switchTab('recordings')">Recordings</button>
+</div>
+
+<div id="tab-sessions" class="tab-content active">
+  <div class="grid">
+    <!-- Left panel: Create session -->
+    <div>
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <h2>Broker Status</h2>
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-value" id="stat-sessions">—</div>
+            <div class="stat-label">Active Sessions</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" id="stat-ports">—</div>
+            <div class="stat-label">Available Ports</div>
+          </div>
         </div>
-        <div class="stat">
-          <div class="stat-value" id="stat-ports">—</div>
-          <div class="stat-label">Available Ports</div>
+      </div>
+
+      <div class="card">
+        <h2>Create Session</h2>
+        <div class="form-group">
+          <label for="user-id">User ID</label>
+          <input type="text" id="user-id" value="tester" placeholder="e.g. tester">
         </div>
+        <div class="form-group">
+          <label for="target-select">Target</label>
+          <select id="target-select">
+            <option value="">Loading targets...</option>
+          </select>
+        </div>
+        <button class="btn-primary" id="create-btn" onclick="createSession()">
+          Create Session
+        </button>
       </div>
     </div>
 
+    <!-- Right panel: Sessions table -->
     <div class="card">
-      <h2>Create Session</h2>
-      <div class="form-group">
-        <label for="user-id">User ID</label>
-        <input type="text" id="user-id" value="tester" placeholder="e.g. tester">
+      <div class="sessions-header">
+        <h2>Sessions</h2>
+        <div style="display:flex;gap:0.5rem;align-items:center;">
+          <label style="margin:0;display:flex;align-items:center;gap:0.3rem;cursor:pointer;">
+            <input type="checkbox" id="auto-refresh" checked> Auto-refresh
+          </label>
+          <button class="btn-sm btn-refresh" onclick="loadSessions()">Refresh</button>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="target-select">Target</label>
-        <select id="target-select">
-          <option value="">Loading targets...</option>
-        </select>
+      <div id="sessions-container">
+        <div class="empty-state">No sessions yet. Create one to get started.</div>
       </div>
-      <button class="btn-primary" id="create-btn" onclick="createSession()">
-        Create Session
-      </button>
     </div>
   </div>
+</div>
 
-  <!-- Right panel: Sessions table -->
-  <div class="card">
+<div id="tab-recordings" class="tab-content">
+  <div class="card" id="recordings-list-view">
     <div class="sessions-header">
-      <h2>Sessions</h2>
-      <div style="display:flex;gap:0.5rem;align-items:center;">
-        <label style="margin:0;display:flex;align-items:center;gap:0.3rem;cursor:pointer;">
-          <input type="checkbox" id="auto-refresh" checked> Auto-refresh
-        </label>
-        <button class="btn-sm btn-refresh" onclick="loadSessions()">Refresh</button>
-      </div>
+      <h2>Recordings</h2>
+      <button class="btn-sm btn-refresh" onclick="loadRecordings()">Refresh</button>
     </div>
-    <div id="sessions-container">
-      <div class="empty-state">No sessions yet. Create one to get started.</div>
+    <div id="recordings-container">
+      <div class="empty-state">No recordings found.</div>
+    </div>
+  </div>
+  <div id="recordings-playback-view" style="display:none;">
+    <button class="btn-sm btn-back" onclick="closePlayback()">&#8592; Back to Recordings</button>
+    <div class="playback-view">
+      <div class="playback-video">
+        <video id="playback-video" controls></video>
+      </div>
+      <div class="playback-events card">
+        <h3>Event Timeline</h3>
+        <div class="events-list" id="events-list"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -559,6 +719,231 @@
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       if (checkbox.checked) {
         autoRefreshTimer = setInterval(loadSessions, 5000);
+      }
+    });
+  }
+
+  // Tab switching
+  let activeTab = 'sessions';
+  let recordingsRefreshTimer = null;
+
+  function switchTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll('.tab-nav button').forEach(btn => {
+      btn.classList.toggle('active', btn.textContent.toLowerCase() === tab);
+    });
+    document.querySelectorAll('.tab-content').forEach(el => {
+      el.classList.toggle('active', el.id === 'tab-' + tab);
+    });
+    if (tab === 'recordings') {
+      loadRecordings();
+      startRecordingsAutoRefresh();
+    } else {
+      stopRecordingsAutoRefresh();
+    }
+  }
+
+  function startRecordingsAutoRefresh() {
+    stopRecordingsAutoRefresh();
+    recordingsRefreshTimer = setInterval(() => {
+      if (activeTab === 'recordings' && document.getElementById('recordings-list-view').style.display !== 'none') {
+        loadRecordings();
+      }
+    }, 5000);
+  }
+
+  function stopRecordingsAutoRefresh() {
+    if (recordingsRefreshTimer) {
+      clearInterval(recordingsRefreshTimer);
+      recordingsRefreshTimer = null;
+    }
+  }
+
+  // Recordings
+  function recordingStateClass(status) {
+    status = (status || '').toLowerCase();
+    if (status === 'recording') return 'state-recording';
+    if (status === 'completed') return 'state-completed';
+    if (status === 'failed') return 'state-failed';
+    return '';
+  }
+
+  function formatDuration(seconds) {
+    if (seconds == null || isNaN(seconds)) return '—';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return m + 'm ' + s + 's';
+  }
+
+  async function loadRecordings() {
+    try {
+      const resp = await fetch(API + '/api/recordings');
+      const recordings = await resp.json();
+      const container = document.getElementById('recordings-container');
+
+      if (!recordings || recordings.length === 0) {
+        container.innerHTML = '<div class="empty-state">No recordings found.</div>';
+        return;
+      }
+
+      let html = `<table>
+        <thead><tr>
+          <th>ID</th>
+          <th>Target</th>
+          <th>User</th>
+          <th>Status</th>
+          <th>Duration</th>
+          <th>Started</th>
+          <th>Actions</th>
+        </tr></thead><tbody>`;
+
+      recordings.forEach(r => {
+        html += `<tr>
+          <td class="mono" title="${r.id}">${shortId(r.id)}</td>
+          <td>${r.target || '—'}</td>
+          <td>${r.user || '—'}</td>
+          <td><span class="state ${recordingStateClass(r.status)}">${r.status}</span></td>
+          <td>${formatDuration(r.duration)}</td>
+          <td>${relativeTime(r.started_at)}</td>
+          <td class="actions">
+            <button class="btn-sm btn-play" onclick="openPlayback('${r.id}', '${r.started_at || ''}')">Play</button>
+          </td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch (e) {
+      console.error('Failed to load recordings', e);
+    }
+  }
+
+  // Playback
+  let playbackEvents = [];
+  let playbackStartTime = 0;
+
+  function openPlayback(recordingId, startedAt) {
+    stopRecordingsAutoRefresh();
+    document.getElementById('recordings-list-view').style.display = 'none';
+    document.getElementById('recordings-playback-view').style.display = 'block';
+
+    const video = document.getElementById('playback-video');
+    video.src = API + '/api/recordings/' + recordingId + '/video';
+    video.load();
+
+    playbackStartTime = startedAt ? new Date(startedAt).getTime() : 0;
+    playbackEvents = [];
+
+    video.ontimeupdate = function() {
+      highlightCurrentEvent(video.currentTime);
+    };
+
+    loadEvents(recordingId);
+  }
+
+  function closePlayback() {
+    const video = document.getElementById('playback-video');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+
+    document.getElementById('recordings-playback-view').style.display = 'none';
+    document.getElementById('recordings-list-view').style.display = 'block';
+    startRecordingsAutoRefresh();
+  }
+
+  async function loadEvents(recordingId) {
+    try {
+      const resp = await fetch(API + '/api/recordings/' + recordingId + '/events');
+      const events = await resp.json();
+      playbackEvents = (events || []).map(e => {
+        let offsetSec = 0;
+        if (e.timestamp && playbackStartTime) {
+          offsetSec = Math.max(0, (new Date(e.timestamp).getTime() - playbackStartTime) / 1000);
+        } else if (e.offset != null) {
+          offsetSec = e.offset;
+        }
+        return { ...e, offsetSec };
+      }).sort((a, b) => a.offsetSec - b.offsetSec);
+
+      renderEvents();
+    } catch (e) {
+      console.error('Failed to load events', e);
+      document.getElementById('events-list').innerHTML =
+        '<div class="empty-state">Failed to load events.</div>';
+    }
+  }
+
+  function formatTimestamp(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  function eventTypeClass(type) {
+    type = (type || '').toLowerCase();
+    if (type === 'process_start') return 'event-type-process_start';
+    if (type === 'process_end') return 'event-type-process_end';
+    if (type === 'window_focus') return 'event-type-window_focus';
+    return '';
+  }
+
+  function eventDetails(event) {
+    const data = event.data || event;
+    const parts = [];
+    if (data.process_name) parts.push(data.process_name);
+    if (data.command_line) parts.push(data.command_line);
+    if (data.window_title) parts.push(data.window_title);
+    if (data.name) parts.push(data.name);
+    if (parts.length === 0 && data.details) parts.push(data.details);
+    return parts.join(' — ') || '—';
+  }
+
+  function renderEvents() {
+    const container = document.getElementById('events-list');
+    if (playbackEvents.length === 0) {
+      container.innerHTML = '<div class="empty-state">No events recorded.</div>';
+      return;
+    }
+
+    container.innerHTML = playbackEvents.map((e, i) => `
+      <div class="event-card" data-index="${i}" onclick="seekToEvent(${i})">
+        <div class="event-time">${formatTimestamp(e.offsetSec)}</div>
+        <span class="event-type ${eventTypeClass(e.type)}">${e.type || 'event'}</span>
+        <div class="event-detail">${eventDetails(e)}</div>
+      </div>
+    `).join('');
+  }
+
+  function seekToEvent(index) {
+    const event = playbackEvents[index];
+    if (!event) return;
+    const video = document.getElementById('playback-video');
+    video.currentTime = event.offsetSec;
+  }
+
+  function highlightCurrentEvent(currentTime) {
+    let activeIndex = -1;
+    for (let i = playbackEvents.length - 1; i >= 0; i--) {
+      if (playbackEvents[i].offsetSec <= currentTime) {
+        activeIndex = i;
+        break;
+      }
+    }
+
+    const cards = document.querySelectorAll('#events-list .event-card');
+    cards.forEach((card, i) => {
+      const isActive = i === activeIndex;
+      card.classList.toggle('active', isActive);
+      if (isActive) {
+        const container = document.getElementById('events-list');
+        const cardTop = card.offsetTop - container.offsetTop;
+        const cardHeight = card.offsetHeight;
+        const scrollTop = container.scrollTop;
+        const containerHeight = container.clientHeight;
+        if (cardTop < scrollTop || cardTop + cardHeight > scrollTop + containerHeight) {
+          container.scrollTop = cardTop - containerHeight / 2 + cardHeight / 2;
+        }
       }
     });
   }

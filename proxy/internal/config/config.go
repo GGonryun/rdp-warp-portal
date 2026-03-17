@@ -23,6 +23,7 @@ type Config struct {
 	CredentialProviderConfig string
 	CertDir                  string
 	SessionDir               string
+	RecordingsDir            string
 	FreerdpProxyBin          string
 	MaxConcurrentSessions    int
 	SessionMaxDuration       time.Duration
@@ -47,6 +48,7 @@ func Load() (*Config, error) {
 		CredentialProviderConfig: "/etc/rdp-broker/targets.json",
 		CertDir:                  "/etc/rdp-broker/certs",
 		SessionDir:               "/tmp/sessions",
+		RecordingsDir:            getEnvString("RECORDINGS_DIR", "/var/lib/p0rtal/recordings"),
 		FreerdpProxyBin:          "freerdp-proxy",
 		MaxConcurrentSessions:    100,
 		SessionMaxDuration:       8 * time.Hour,

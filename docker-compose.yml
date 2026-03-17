@@ -10,6 +10,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./proxy/targets.json:/etc/rdp-broker/targets.json:ro
+      - recordings:/var/lib/p0rtal/recordings
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -29,3 +30,6 @@ services:
       broker:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  recordings:
