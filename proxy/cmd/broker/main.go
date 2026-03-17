@@ -106,8 +106,8 @@ func main() {
 
 	logger.Info("session manager initialized")
 
-	// Create API router (empty secret = dev mode, no JWT validation)
-	router := api.NewRouter("", logger)
+	// Create API router
+	router := api.NewRouter(cfg.APIKey, logger)
 
 	// Register handlers
 	sessionsHandler := api.NewSessionsHandler(manager, cfg.BrokerHost)

@@ -6,7 +6,8 @@
       "Bash(/opt/homebrew/bin/go build:*)",
       "Bash(/opt/homebrew/bin/go test:*)",
       "Bash(git mv:*)",
-      "Bash(/opt/homebrew/bin/go vet:*)"
+      "Bash(/opt/homebrew/bin/go vet:*)",
+      "Bash(/opt/homebrew/bin/go mod:*)"
     ]
   }
 }

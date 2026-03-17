@@ -11,6 +11,7 @@ import (
 type Config struct {
 	// Broker settings (from environment)
 	BrokerHost string // Public hostname for RDP connections
+	APIKey     string // API key for authenticating requests (empty = no auth)
 	LogLevel   string // Log level: "debug", "info", "warn", "error"
 
 	// Hardcoded settings
@@ -37,6 +38,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		// From environment
 		BrokerHost: os.Getenv("BROKER_HOST"),
+		APIKey:     os.Getenv("API_KEY"),
 		LogLevel:   getEnvString("LOG_LEVEL", "info"),
 
 		// Hardcoded

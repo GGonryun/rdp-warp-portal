@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 )
 
 // ContextKey is a type for context keys to avoid collisions.
@@ -24,39 +22,52 @@ const (
 
 // Router wraps http.ServeMux with middleware and logging.
 type Router struct {
-	mux       *http.ServeMux
-	jwtSecret []byte
-	logger    *slog.Logger
+	mux    *http.ServeMux
+	apiKey string
+	logger *slog.Logger
 }
 
 // NewRouter creates a new API router.
-func NewRouter(jwtSecret string, logger *slog.Logger) *Router {
+// If apiKey is non-empty, all /api/ requests require Bearer <apiKey>.
+func NewRouter(apiKey string, logger *slog.Logger) *Router {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Router{
-		mux:       http.NewServeMux(),
-		jwtSecret: []byte(jwtSecret),
-		logger:    logger,
+		mux:    http.NewServeMux(),
+		apiKey: apiKey,
+		logger: logger,
 	}
 }
 
-// Handle registers a handler for a pattern with optional authentication.
+// Handle registers a handler for a pattern.
+// The requireAuth parameter is kept for compatibility but ignored —
+// auth is now handled globally based on the API key.
 func (r *Router) Handle(pattern string, handler http.Handler, requireAuth bool) {
-	if requireAuth {
-		handler = r.authMiddleware(handler)
-	}
 	handler = r.loggingMiddleware(handler)
 	r.mux.Handle(pattern, handler)
 }
 
-// HandleFunc registers a handler function for a pattern with optional authentication.
+// HandleFunc registers a handler function for a pattern.
 func (r *Router) HandleFunc(pattern string, handler http.HandlerFunc, requireAuth bool) {
 	r.Handle(pattern, handler, requireAuth)
 }
 
 // ServeHTTP implements http.Handler.
+// If an API key is configured, all /api/ requests are gated.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if r.apiKey != "" && strings.HasPrefix(req.URL.Path, "/api/") {
+		authHeader := req.Header.Get("Authorization")
+		if authHeader == "" {
+			writeError(w, http.StatusUnauthorized, "missing authorization header")
+			return
+		}
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" || parts[1] != r.apiKey {
+			writeError(w, http.StatusUnauthorized, "invalid api key")
+			return
+		}
+	}
 	r.mux.ServeHTTP(w, req)
 }
 
@@ -65,12 +76,10 @@ func (r *Router) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		start := time.Now()
 
-		// Generate request ID
 		requestID := generateRequestID()
 		ctx := context.WithValue(req.Context(), ContextKeyRequestID, requestID)
 		req = req.WithContext(ctx)
 
-		// Wrap response writer to capture status code
 		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 		next.ServeHTTP(wrapped, req)
@@ -85,86 +94,6 @@ func (r *Router) loggingMiddleware(next http.Handler) http.Handler {
 			"request_id", requestID,
 			"remote_addr", req.RemoteAddr,
 		)
-	})
-}
-
-// authMiddleware validates JWT tokens.
-func (r *Router) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// Extract token from Authorization header
-		authHeader := req.Header.Get("Authorization")
-		if authHeader == "" {
-			writeError(w, http.StatusUnauthorized, "missing authorization header")
-			return
-		}
-
-		// Expect "Bearer <token>" format
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			writeError(w, http.StatusUnauthorized, "invalid authorization header format")
-			return
-		}
-
-		tokenString := parts[1]
-
-		// Skip validation if no secret is configured (development mode)
-		var userID string
-		if len(r.jwtSecret) == 0 {
-			// Development mode - accept any token and extract sub claim
-			token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
-			if err != nil {
-				writeError(w, http.StatusUnauthorized, "invalid token format")
-				return
-			}
-			claims, ok := token.Claims.(jwt.MapClaims)
-			if !ok {
-				writeError(w, http.StatusUnauthorized, "invalid token claims")
-				return
-			}
-			userID, _ = claims["sub"].(string)
-			if userID == "" {
-				userID = "dev-user" // Default for development
-			}
-		} else {
-			// Production mode - validate token
-			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-				// Validate signing method
-				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, jwt.ErrSignatureInvalid
-				}
-				return r.jwtSecret, nil
-			})
-
-			if err != nil {
-				writeError(w, http.StatusUnauthorized, "invalid token")
-				return
-			}
-
-			claims, ok := token.Claims.(jwt.MapClaims)
-			if !ok || !token.Valid {
-				writeError(w, http.StatusUnauthorized, "invalid token claims")
-				return
-			}
-
-			// Extract user ID from claims
-			userID, _ = claims["sub"].(string)
-			if userID == "" {
-				writeError(w, http.StatusUnauthorized, "missing user ID in token")
-				return
-			}
-
-			// Check expiration (jwt.Parse checks this automatically, but we can add custom logic)
-			if exp, ok := claims["exp"].(float64); ok {
-				if time.Unix(int64(exp), 0).Before(time.Now()) {
-					writeError(w, http.StatusUnauthorized, "token expired")
-					return
-				}
-			}
-		}
-
-		// Add user ID to context
-		ctx := context.WithValue(req.Context(), ContextKeyUserID, userID)
-		next.ServeHTTP(w, req.WithContext(ctx))
 	})
 }
 
@@ -214,6 +143,5 @@ func getUserID(ctx context.Context) string {
 
 // generateRequestID generates a simple request ID.
 func generateRequestID() string {
-	// Simple implementation - in production, use UUID
 	return time.Now().Format("20060102150405.000000000")
 }
