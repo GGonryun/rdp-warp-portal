@@ -12,7 +12,7 @@ services:
     volumes:
       - ./proxy/targets.json:/etc/rdp-broker/targets.json:ro
       - ./web:/usr/share/p0rtal/web:ro
-      - recordings:/var/lib/p0rtal/recordings
+      - ./data/recordings:/var/lib/p0rtal/recordings
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -21,5 +21,3 @@ services:
       retries: 3
       start_period: 10s
 
-volumes:
-  recordings:

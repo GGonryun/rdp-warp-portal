@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/p0-security/rdp-broker/internal/acl"
 	"github.com/p0-security/rdp-broker/internal/api"
 	"github.com/p0-security/rdp-broker/internal/certs"
 	"github.com/p0-security/rdp-broker/internal/config"
@@ -106,12 +107,19 @@ func main() {
 
 	logger.Info("session manager initialized")
 
+	// Initialize ACL store.
+	aclStore := acl.NewMemoryStore()
+	logger.Info("ACL store initialized (in-memory)")
+
 	// Create API router
 	router := api.NewRouter(cfg.APIKey, logger)
 
 	// Register handlers
-	sessionsHandler := api.NewSessionsHandler(manager, cfg.BrokerHost)
+	sessionsHandler := api.NewSessionsHandler(manager, cfg.BrokerHost, aclStore)
 	sessionsHandler.RegisterRoutes(router)
+
+	accessHandler := api.NewAccessHandler(aclStore, manager)
+	accessHandler.RegisterRoutes(router)
 
 	targetsHandler := api.NewTargetsHandler(provider)
 	targetsHandler.RegisterRoutes(router)
