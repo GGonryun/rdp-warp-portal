@@ -141,6 +141,10 @@ func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if recordings == nil {
+		recordings = []*recording.Recording{}
+	}
+
 	writeJSON(w, http.StatusOK, recordings)
 }
 

@@ -126,10 +126,18 @@ func (r *Recorder) Stop() error {
 		slog.Error("failed to end recording", "error", err)
 	}
 
-	// Clean up temp directory.
+	// Clean up temp directory. Retry briefly in case ffmpeg still holds a file handle.
 	if r.outputDir != "" {
-		if err := os.RemoveAll(r.outputDir); err != nil {
-			slog.Warn("failed to remove temp dir", "error", err, "dir", r.outputDir)
+		var removeErr error
+		for i := 0; i < 5; i++ {
+			removeErr = os.RemoveAll(r.outputDir)
+			if removeErr == nil {
+				break
+			}
+			time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
+		}
+		if removeErr != nil {
+			slog.Warn("failed to remove temp dir", "error", removeErr, "dir", r.outputDir)
 		}
 	}
 

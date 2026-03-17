@@ -854,10 +854,10 @@
       recordings.forEach(r => {
         html += `<tr>
           <td class="mono" title="${r.id}">${shortId(r.id)}</td>
-          <td>${r.target || '—'}</td>
-          <td>${r.user || '—'}</td>
+          <td>${r.target_name || '—'}</td>
+          <td>${r.windows_user || '—'}</td>
           <td><span class="state ${recordingStateClass(r.status)}">${r.status}</span></td>
-          <td>${formatDuration(r.duration)}</td>
+          <td>${formatDuration(r.duration_secs)}</td>
           <td>${relativeTime(r.started_at)}</td>
           <td class="actions">
             <button class="btn-sm btn-play" onclick="openPlayback('${r.id}', '${r.started_at || ''}')">Play</button>
