@@ -21,6 +21,8 @@ type Recorder struct {
 	screen      *ScreenRecorder
 	events      *EventCapture
 	windows     *WindowTracker
+	input       *InputTracker
+	clipboard   *ClipboardTracker
 	eventBuffer []client.RecordingEvent
 	mu          sync.Mutex
 	cancel      context.CancelFunc
@@ -84,6 +86,14 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 	// Start window tracker.
 	r.windows = NewWindowTracker(500*time.Millisecond, r.handleWindowEvent)
 	go r.windows.Run(ctx)
+
+	// Start input tracker (keyboard + mouse hooks).
+	r.input = NewInputTracker(r.handleInputEvent)
+	go r.input.Run(ctx)
+
+	// Start clipboard tracker.
+	r.clipboard = NewClipboardTracker(1*time.Second, r.handleClipboardEvent)
+	go r.clipboard.Run(ctx)
 
 	// Start event flush goroutine.
 	go r.flushLoop(ctx)
@@ -169,16 +179,21 @@ func (r *Recorder) handleChunk(chunkPath string) {
 
 // handleProcessEvent converts a ProcessEvent to a RecordingEvent and buffers it.
 func (r *Recorder) handleProcessEvent(pe ProcessEvent) {
+	data := map[string]any{
+		"pid":          pe.PID,
+		"name":         pe.Name,
+		"command_line": pe.CommandLine,
+		"user":         pe.User,
+		"parent_pid":   pe.ParentPID,
+	}
+	if pe.Type == "process_end" {
+		data["exit_code"] = pe.ExitCode
+	}
+
 	evt := client.RecordingEvent{
 		Timestamp: pe.Timestamp,
 		Type:      pe.Type,
-		Data: map[string]any{
-			"pid":          pe.PID,
-			"name":         pe.Name,
-			"command_line": pe.CommandLine,
-			"user":         pe.User,
-			"parent_pid":   pe.ParentPID,
-		},
+		Data:      data,
 	}
 
 	r.mu.Lock()
@@ -195,6 +210,49 @@ func (r *Recorder) handleWindowEvent(we WindowEvent) {
 			"title":   we.Title,
 			"process": we.Process,
 			"pid":     we.PID,
+		},
+	}
+
+	r.mu.Lock()
+	r.eventBuffer = append(r.eventBuffer, evt)
+	r.mu.Unlock()
+}
+
+// handleInputEvent converts an InputEvent to a RecordingEvent and buffers it.
+func (r *Recorder) handleInputEvent(ie InputEvent) {
+	data := map[string]any{
+		"window": ie.Window,
+		"pid":    ie.PID,
+	}
+
+	if ie.Type == "key_press" {
+		data["key"] = ie.Key
+	} else {
+		data["button"] = ie.Button
+		data["x"] = ie.X
+		data["y"] = ie.Y
+	}
+
+	evt := client.RecordingEvent{
+		Timestamp: ie.Timestamp,
+		Type:      ie.Type,
+		Data:      data,
+	}
+
+	r.mu.Lock()
+	r.eventBuffer = append(r.eventBuffer, evt)
+	r.mu.Unlock()
+}
+
+// handleClipboardEvent converts a ClipboardEvent to a RecordingEvent and buffers it.
+func (r *Recorder) handleClipboardEvent(ce ClipboardEvent) {
+	evt := client.RecordingEvent{
+		Timestamp: ce.Timestamp,
+		Type:      "clipboard",
+		Data: map[string]any{
+			"content": ce.Content,
+			"window":  ce.Window,
+			"pid":     ce.PID,
 		},
 	}
 

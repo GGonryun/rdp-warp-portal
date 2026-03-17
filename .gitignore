@@ -11,3 +11,4 @@ config.json
 
 # Build artifacts
 broker
+data/

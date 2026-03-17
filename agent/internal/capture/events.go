@@ -15,6 +15,10 @@ Register-WmiEvent -Class Win32_ProcessStartTrace -Action {
     $p = $Event.SourceEventArgs.NewEvent
     @{ts=(Get-Date -Format o);type='process_start';pid=$p.ProcessId;name=$p.ProcessName;command_line=$p.CommandLine;parent_pid=$p.ParentProcessId} | ConvertTo-Json -Compress
 } | Out-Null
+Register-WmiEvent -Class Win32_ProcessStopTrace -Action {
+    $p = $Event.SourceEventArgs.NewEvent
+    @{ts=(Get-Date -Format o);type='process_end';pid=$p.ProcessId;name=$p.ProcessName;exit_code=$p.ExitStatus} | ConvertTo-Json -Compress
+} | Out-Null
 while($true){Start-Sleep 1}
 `
 
@@ -27,6 +31,7 @@ type ProcessEvent struct {
 	CommandLine string
 	User        string
 	ParentPID   uint32
+	ExitCode    int32
 }
 
 // psEventJSON is the JSON structure output by the PowerShell script.
@@ -37,6 +42,7 @@ type psEventJSON struct {
 	Name        string `json:"name"`
 	CommandLine string `json:"command_line"`
 	ParentPID   uint32 `json:"parent_pid"`
+	ExitCode    int32  `json:"exit_code"`
 }
 
 // EventCapture captures process events via PowerShell WMI subscriptions.
@@ -96,6 +102,7 @@ func (e *EventCapture) Start(ctx context.Context) error {
 				Name:        evt.Name,
 				CommandLine: evt.CommandLine,
 				ParentPID:   evt.ParentPID,
+				ExitCode:    evt.ExitCode,
 			}
 
 			if e.onEvent != nil {
