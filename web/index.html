@@ -407,9 +407,14 @@
 
 <header>
   <h1><span>p0rtal</span> — RDP Proxy Tester</h1>
-  <div class="health-badge">
-    <div class="health-dot" id="health-dot"></div>
-    <span id="health-text">Checking...</span>
+  <div style="display:flex;align-items:center;gap:1rem;">
+    <input type="password" id="api-key" placeholder="API Key" value=""
+      style="width:200px;padding:0.35rem 0.6rem;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);"
+      oninput="saveApiKey()" />
+    <div class="health-badge">
+      <div class="health-dot" id="health-dot"></div>
+      <span id="health-text">Checking...</span>
+    </div>
   </div>
 </header>
 
@@ -499,25 +504,28 @@
 <div class="toast" id="toast"></div>
 
 <script>
-  const API = '';  // same origin via nginx proxy
+  const API = '';
   let autoRefreshTimer = null;
 
-  // Simple JWT for dev mode (unsigned, just needs a "sub" claim)
-  function makeDevJWT(userId) {
-    const header = btoa(JSON.stringify({ alg: 'none', typ: 'JWT' }));
-    const payload = btoa(JSON.stringify({ sub: userId, iat: Math.floor(Date.now() / 1000) }));
-    return header + '.' + payload + '.';
+  function getApiKey() {
+    return document.getElementById('api-key').value.trim();
+  }
+
+  function saveApiKey() {
+    localStorage.setItem('p0rtal_api_key', getApiKey());
   }
 
   function getUserId() {
     return document.getElementById('user-id').value.trim() || 'tester';
   }
 
-  function authHeaders() {
-    return {
-      'Authorization': 'Bearer ' + makeDevJWT(getUserId()),
-      'Content-Type': 'application/json'
-    };
+  function apiFetch(url, options = {}) {
+    const key = getApiKey();
+    if (key) {
+      options.headers = options.headers || {};
+      options.headers['Authorization'] = 'Bearer ' + key;
+    }
+    return fetch(url, options);
   }
 
   function toast(message, type = 'success') {
@@ -553,7 +561,7 @@
   // Health check
   async function checkHealth() {
     try {
-      const resp = await fetch(API + '/health');
+      const resp = await apiFetch(API + '/health');
       const data = await resp.json();
       document.getElementById('health-dot').className = 'health-dot ok';
       document.getElementById('health-text').textContent =
@@ -571,7 +579,7 @@
   // Load targets
   async function loadTargets() {
     try {
-      const resp = await fetch(API + '/api/targets');
+      const resp = await apiFetch(API + '/api/targets');
       const targets = await resp.json();
       const select = document.getElementById('target-select');
       select.innerHTML = '';
@@ -595,7 +603,7 @@
   async function loadSessions() {
     try {
       const userId = getUserId();
-      const resp = await fetch(API + '/api/sessions?user_id=' + encodeURIComponent(userId));
+      const resp = await apiFetch(API + '/api/sessions?user_id=' + encodeURIComponent(userId));
       const sessions = await resp.json();
       const container = document.getElementById('sessions-container');
 
@@ -662,7 +670,7 @@
     btn.textContent = 'Creating...';
 
     try {
-      const resp = await fetch(API + '/api/sessions', {
+      const resp = await apiFetch(API + '/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -688,14 +696,26 @@
   }
 
   // Download RDP file
-  function downloadRDP(sessionId) {
-    window.open(API + '/api/sessions/' + sessionId + '/rdp', '_blank');
+  async function downloadRDP(sessionId) {
+    try {
+      const resp = await apiFetch(API + '/api/sessions/' + sessionId + '/rdp');
+      if (!resp.ok) throw new Error('Failed to download RDP file');
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = sessionId + '.rdp';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   }
 
   // Terminate session
   async function terminateSession(sessionId) {
     try {
-      const resp = await fetch(API + '/api/sessions/' + sessionId, { method: 'DELETE' });
+      const resp = await apiFetch(API + '/api/sessions/' + sessionId, { method: 'DELETE' });
       if (resp.ok || resp.status === 204) {
         toast('Session terminated');
       } else {
@@ -777,7 +797,7 @@
 
   async function loadRecordings() {
     try {
-      const resp = await fetch(API + '/api/recordings');
+      const resp = await apiFetch(API + '/api/recordings');
       const recordings = await resp.json();
       const container = document.getElementById('recordings-container');
 
@@ -854,7 +874,7 @@
 
   async function loadEvents(recordingId) {
     try {
-      const resp = await fetch(API + '/api/recordings/' + recordingId + '/events');
+      const resp = await apiFetch(API + '/api/recordings/' + recordingId + '/events');
       const events = await resp.json();
       playbackEvents = (events || []).map(e => {
         let offsetSec = 0;
@@ -948,7 +968,10 @@
     });
   }
 
-  // Init
+  // Init — restore API key from localStorage
+  const savedKey = localStorage.getItem('p0rtal_api_key');
+  if (savedKey) document.getElementById('api-key').value = savedKey;
+
   checkHealth();
   loadTargets();
   loadSessions();

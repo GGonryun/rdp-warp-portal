@@ -7,6 +7,7 @@ services:
       - "33400-33500:33400-33500"
     environment:
       - BROKER_HOST=${BROKER_HOST}
+      - API_KEY=${API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./proxy/targets.json:/etc/rdp-broker/targets.json:ro
