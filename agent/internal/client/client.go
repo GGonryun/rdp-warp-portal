@@ -29,6 +29,26 @@ func New(baseURL, apiKey string) *Client {
 	}
 }
 
+// HealthCheck verifies the agent can reach the broker by hitting /health.
+func (c *Client) HealthCheck(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("connect to broker: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("broker returned status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 // CreateRecordingRequest is the payload for creating a new recording.
 type CreateRecordingRequest struct {
 	SessionID     string `json:"session_id"`
@@ -140,7 +160,7 @@ func (c *Client) UploadChunk(ctx context.Context, recordingID string, data io.Re
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
-	httpReq.Header.Set("Content-Type", "video/mp4")
+	httpReq.Header.Set("Content-Type", "video/mp2t")
 
 	resp, err := c.doWithRetry(ctx, httpReq)
 	if err != nil {

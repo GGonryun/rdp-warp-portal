@@ -126,7 +126,7 @@ func (s *Store) AppendChunk(id string, data io.Reader) (int, error) {
 	}
 
 	chunkNum := rec.ChunkCount
-	chunkPath := filepath.Join(s.recordingDir(id), "chunks", fmt.Sprintf("%03d.mp4", chunkNum))
+	chunkPath := filepath.Join(s.recordingDir(id), "chunks", fmt.Sprintf("%03d.ts", chunkNum))
 
 	f, err := os.Create(chunkPath)
 	if err != nil {
@@ -206,7 +206,7 @@ func (s *Store) Finalize(id string) error {
 	}
 
 	for i := 0; i < rec.ChunkCount; i++ {
-		chunkPath := filepath.Join(chunksDir, fmt.Sprintf("%03d.mp4", i))
+		chunkPath := filepath.Join(chunksDir, fmt.Sprintf("%03d.ts", i))
 		fmt.Fprintf(concatFile, "file '%s'\n", chunkPath)
 	}
 	concatFile.Close()
@@ -280,6 +280,45 @@ func (s *Store) GetEvents(id string) ([]RecordingEvent, error) {
 // VideoPath returns the absolute path to the final concatenated video.
 func (s *Store) VideoPath(id string) string {
 	return filepath.Join(s.recordingDir(id), "video.mp4")
+}
+
+// ChunkPath returns the absolute path to a specific chunk file.
+func (s *Store) ChunkPath(id string, chunkIndex int) string {
+	return filepath.Join(s.recordingDir(id), "chunks", fmt.Sprintf("%03d.ts", chunkIndex))
+}
+
+// GeneratePlaylist returns an HLS .m3u8 playlist for the recording.
+// For live (still recording) sessions, it includes EXT-X-TARGETDURATION
+// but omits EXT-X-ENDLIST so players keep polling for new segments.
+func (s *Store) GeneratePlaylist(id string, chunkSecs int) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rec, err := s.readMetadata(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if chunkSecs <= 0 {
+		chunkSecs = 30
+	}
+
+	var b []byte
+	b = append(b, "#EXTM3U\n"...)
+	b = append(b, fmt.Sprintf("#EXT-X-VERSION:3\n")...)
+	b = append(b, fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", chunkSecs)...)
+	b = append(b, "#EXT-X-MEDIA-SEQUENCE:0\n"...)
+
+	for i := 0; i < rec.ChunkCount; i++ {
+		b = append(b, fmt.Sprintf("#EXTINF:%d.000,\n", chunkSecs)...)
+		b = append(b, fmt.Sprintf("segments/%03d.ts\n", i)...)
+	}
+
+	if rec.Status == StatusCompleted {
+		b = append(b, "#EXT-X-ENDLIST\n"...)
+	}
+
+	return b, nil
 }
 
 // recordingDir returns the directory path for a recording.

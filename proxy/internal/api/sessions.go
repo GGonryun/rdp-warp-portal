@@ -150,9 +150,7 @@ func (h *SessionsHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if userID == "" {
 		userID = getUserID(r.Context())
 	}
-	if userID == "" {
-		userID = "anonymous"
-	}
+	// Pass userID as-is; empty string means "all sessions"
 
 	sessions := h.manager.ListSessions(userID)
 

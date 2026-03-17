@@ -408,7 +408,7 @@ func TestSessionsHandler_ListSessions_FromJWTContext(t *testing.T) {
 	}
 }
 
-func TestSessionsHandler_ListSessions_Anonymous(t *testing.T) {
+func TestSessionsHandler_ListSessions_NoFilter(t *testing.T) {
 	mock := newMockManager()
 	var capturedUserID string
 	mock.listSessionsFunc = func(userID string) []*session.Session {
@@ -418,7 +418,7 @@ func TestSessionsHandler_ListSessions_Anonymous(t *testing.T) {
 
 	handler := NewSessionsHandler(mock, "broker.local")
 
-	// No user_id in query, no JWT context
+	// No user_id in query, no JWT context — should list all sessions
 	req := httptest.NewRequest("GET", "/api/sessions", nil)
 	rec := httptest.NewRecorder()
 
@@ -428,8 +428,8 @@ func TestSessionsHandler_ListSessions_Anonymous(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	if capturedUserID != "anonymous" {
-		t.Errorf("expected user_id 'anonymous', got %q", capturedUserID)
+	if capturedUserID != "" {
+		t.Errorf("expected empty user_id (all sessions), got %q", capturedUserID)
 	}
 }
 
