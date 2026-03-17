@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -121,6 +122,13 @@ func main() {
 	recordingStore := recording.NewStore(cfg.RecordingsDir)
 	recordingsHandler := api.NewRecordingsHandler(recordingStore)
 	recordingsHandler.RegisterRoutes(router)
+
+	// Serve the web dashboard at /
+	if cfg.WebDir != "" {
+		router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, filepath.Join(cfg.WebDir, "index.html"))
+		}, false)
+	}
 
 	// Create HTTP server
 	server := &http.Server{
