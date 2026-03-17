@@ -10,8 +10,10 @@ import (
 
 // mockTarget holds both public info and private credentials for a target.
 type mockTarget struct {
-	Info        TargetInfo
-	Credentials TargetCredentials
+	Info   TargetInfo
+	Port   int
+	Domain string
+	Users  []TargetUser
 }
 
 // MockProvider is an in-memory credential provider for development and testing.
@@ -30,56 +32,43 @@ type MockProvider struct {
 var _ CredentialProvider = (*MockProvider)(nil)
 
 // NewMockProvider creates a MockProvider with default hardcoded targets.
-//
-// The default targets are:
-//   - dc-01: Domain Controller 01 (10.0.1.10)
-//   - ws-05: Workstation 05 (10.0.1.50)
-//   - win-vm-1: Azure Windows VM (20.64.171.136)
-//
-// This is useful for quick development and testing without configuration files.
 func NewMockProvider() *MockProvider {
 	return &MockProvider{
 		targets: map[string]mockTarget{
 			"dc-01": {
 				Info: TargetInfo{
 					ID:       "dc-01",
-					Name:     "Domain Controller 01",
-					Hostname: "10.0.1.10",
+					Hostname: "dc-01",
+					IP: "10.0.1.10",
 				},
-				Credentials: TargetCredentials{
-					Hostname: "10.0.1.10",
-					Port:     3389,
-					Username: "Administrator",
-					Password: "P@ssw0rd!",
-					Domain:   "CORP",
+				Port:   3389,
+				Domain: "CORP",
+				Users: []TargetUser{
+					{Username: "Administrator", Password: "P@ssw0rd!"},
 				},
 			},
 			"ws-05": {
 				Info: TargetInfo{
 					ID:       "ws-05",
-					Name:     "Workstation 05",
-					Hostname: "10.0.1.50",
+					Hostname: "ws-05",
+					IP: "10.0.1.50",
 				},
-				Credentials: TargetCredentials{
-					Hostname: "10.0.1.50",
-					Port:     3389,
-					Username: "svc-rdp",
-					Password: "Sup3rS3cret",
-					Domain:   "CORP",
+				Port:   3389,
+				Domain: "CORP",
+				Users: []TargetUser{
+					{Username: "svc-rdp", Password: "Sup3rS3cret"},
 				},
 			},
 			"win-vm-1": {
 				Info: TargetInfo{
 					ID:       "win-vm-1",
-					Name:     "Azure Windows VM",
-					Hostname: "20.64.171.136",
+					Hostname: "win-vm-1",
+					IP: "20.64.171.136",
 				},
-				Credentials: TargetCredentials{
-					Hostname: "20.64.171.136",
-					Port:     3389,
-					Username: "rdpadmin",
-					Password: "CHANGE_ME_BEFORE_DEPLOY",
-					Domain:   "",
+				Port:   3389,
+				Domain: "",
+				Users: []TargetUser{
+					{Username: "rdpadmin", Password: "CHANGE_ME_BEFORE_DEPLOY"},
 				},
 			},
 		},
@@ -93,12 +82,11 @@ type mockConfigFile struct {
 
 // mockConfigTarget represents a single target in the config file.
 type mockConfigTarget struct {
-	Name     string `json:"name"`
-	Hostname string `json:"hostname"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Domain   string `json:"domain"`
+	Hostname string       `json:"hostname"`
+	IP       string       `json:"ip"`
+	Port     int          `json:"port"`
+	Domain   string       `json:"domain"`
+	Users    []TargetUser `json:"users"`
 }
 
 // NewMockProviderFromConfig creates a MockProvider from a JSON configuration file.
@@ -107,13 +95,14 @@ type mockConfigTarget struct {
 //
 //	{
 //	  "targets": {
-//	    "dc-01": {
-//	      "name": "Domain Controller 01",
-//	      "hostname": "10.0.1.10",
+//	    "mike-rdp": {
+//	      "hostname": "mike-rdp",
+//	      "ip": "10.1.0.7",
 //	      "port": 3389,
-//	      "username": "Administrator",
-//	      "password": "P@ssw0rd!",
-//	      "domain": "CORP"
+//	      "domain": "",
+//	      "users": [
+//	        {"username": "rdpadmin", "password": "Password123abc"}
+//	      ]
 //	    }
 //	  }
 //	}
@@ -132,7 +121,6 @@ func NewMockProviderFromConfig(path string) (*MockProvider, error) {
 
 	targets := make(map[string]mockTarget, len(config.Targets))
 	for id, t := range config.Targets {
-		// Default port to 3389 if not specified
 		port := t.Port
 		if port == 0 {
 			port = 3389
@@ -141,16 +129,12 @@ func NewMockProviderFromConfig(path string) (*MockProvider, error) {
 		targets[id] = mockTarget{
 			Info: TargetInfo{
 				ID:       id,
-				Name:     t.Name,
 				Hostname: t.Hostname,
+				IP: t.IP,
 			},
-			Credentials: TargetCredentials{
-				Hostname: t.Hostname,
-				Port:     port,
-				Username: t.Username,
-				Password: t.Password,
-				Domain:   t.Domain,
-			},
+			Port:   port,
+			Domain: t.Domain,
+			Users:  t.Users,
 		}
 	}
 
@@ -159,12 +143,12 @@ func NewMockProviderFromConfig(path string) (*MockProvider, error) {
 	}, nil
 }
 
-// GetTargetCredentials returns the credentials for the specified target.
+// GetTargetCredentials returns the credentials for a specific user on the specified target.
 //
 // Returns ErrTargetNotFound if the target ID is not known.
+// Returns ErrUserNotFound if the username is not available on the target.
 // This method is safe for concurrent use.
-func (p *MockProvider) GetTargetCredentials(ctx context.Context, targetID string) (*TargetCredentials, error) {
-	// Check context cancellation first
+func (p *MockProvider) GetTargetCredentials(ctx context.Context, targetID, username string) (*TargetCredentials, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -179,9 +163,19 @@ func (p *MockProvider) GetTargetCredentials(ctx context.Context, targetID string
 		return nil, ErrTargetNotFound
 	}
 
-	// Return a copy to prevent callers from modifying the stored credentials
-	creds := target.Credentials
-	return &creds, nil
+	for _, u := range target.Users {
+		if u.Username == username {
+			return &TargetCredentials{
+				IP:       target.Info.IP,
+				Port:     target.Port,
+				Username: u.Username,
+				Password: u.Password,
+				Domain:   target.Domain,
+			}, nil
+		}
+	}
+
+	return nil, ErrUserNotFound
 }
 
 // ListTargets returns metadata for all available targets.
@@ -189,7 +183,6 @@ func (p *MockProvider) GetTargetCredentials(ctx context.Context, targetID string
 // The returned TargetInfo structs do NOT include credentials.
 // This method is safe for concurrent use.
 func (p *MockProvider) ListTargets(ctx context.Context) ([]TargetInfo, error) {
-	// Check context cancellation first
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -207,33 +200,53 @@ func (p *MockProvider) ListTargets(ctx context.Context) ([]TargetInfo, error) {
 	return targets, nil
 }
 
+// ListDestinations returns all targets with their full user credentials.
+// This method is safe for concurrent use.
+func (p *MockProvider) ListDestinations(ctx context.Context) ([]TargetDestination, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	destinations := make([]TargetDestination, 0, len(p.targets))
+	for _, t := range p.targets {
+		users := make([]TargetUser, len(t.Users))
+		copy(users, t.Users)
+		destinations = append(destinations, TargetDestination{
+			ID:       t.Info.ID,
+			Hostname: t.Info.Hostname,
+			IP:       t.Info.IP,
+			Users:    users,
+		})
+	}
+
+	return destinations, nil
+}
+
 // Close releases resources held by the provider.
-//
-// For MockProvider, this is a no-op since there are no external connections.
-// The method is provided to satisfy the CredentialProvider interface.
 func (p *MockProvider) Close() error {
-	// No resources to clean up for the mock provider
 	return nil
 }
 
 // AddTarget adds or updates a target in the provider.
-//
-// This method is primarily useful for testing scenarios where you need
-// to add targets dynamically. It is safe for concurrent use.
-func (p *MockProvider) AddTarget(id string, info TargetInfo, creds TargetCredentials) {
+// This method is primarily useful for testing scenarios.
+func (p *MockProvider) AddTarget(id string, info TargetInfo, port int, domain string, users []TargetUser) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.targets[id] = mockTarget{
-		Info:        info,
-		Credentials: creds,
+		Info:   info,
+		Port:   port,
+		Domain: domain,
+		Users:  users,
 	}
 }
 
 // RemoveTarget removes a target from the provider.
-//
-// This method is primarily useful for testing scenarios. It is safe for
-// concurrent use. Returns true if the target existed and was removed.
 func (p *MockProvider) RemoveTarget(id string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -244,8 +257,6 @@ func (p *MockProvider) RemoveTarget(id string) bool {
 }
 
 // TargetCount returns the number of targets in the provider.
-//
-// This method is primarily useful for testing. It is safe for concurrent use.
 func (p *MockProvider) TargetCount() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

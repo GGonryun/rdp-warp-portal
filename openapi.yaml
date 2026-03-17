@@ -1,0 +1,614 @@
+openapi: 3.0.3
+info:
+  title: P0rtal RDP Broker API
+  description: API for managing RDP sessions through the P0rtal broker proxy.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: API key passed as Bearer token. Set via API_KEY env var. Leave empty to disable auth.
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Not Found
+        code:
+          type: integer
+          example: 404
+        message:
+          type: string
+          example: target not found
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, ready]
+        active_sessions:
+          type: integer
+        available_ports:
+          type: integer
+
+    TargetUser:
+      type: object
+      properties:
+        username:
+          type: string
+          example: rdpadmin
+        password:
+          type: string
+          example: Password123abc
+
+    Target:
+      type: object
+      properties:
+        id:
+          type: string
+          example: mike-rdp
+        hostname:
+          type: string
+          example: mike-rdp
+        ip:
+          type: string
+          example: 10.1.0.7
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/TargetUser'
+
+    CreateSessionRequest:
+      type: object
+      required:
+        - target_id
+        - username
+      properties:
+        target_id:
+          type: string
+          description: ID of the target machine to connect to
+          example: mike-rdp
+        username:
+          type: string
+          description: Which user account to connect as on the target
+          example: rdpadmin
+        user_id:
+          type: string
+          description: Optional identifier for the requesting user
+          example: john.doe
+
+    CreateSessionResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+        proxy_host:
+          type: string
+        proxy_port:
+          type: integer
+        rdp_file_url:
+          type: string
+        state:
+          type: string
+          enum: [creating, active, connected, terminating, terminated]
+        created_at:
+          type: string
+          format: date-time
+        token_expires_at:
+          type: string
+          format: date-time
+
+    Session:
+      type: object
+      properties:
+        session_id:
+          type: string
+        user_id:
+          type: string
+        target_id:
+          type: string
+        target_host:
+          type: string
+        proxy_port:
+          type: integer
+        state:
+          type: string
+          enum: [creating, active, connected, terminating, terminated]
+        pid:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        connected_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateRecordingRequest:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        targetId:
+          type: string
+        targetName:
+          type: string
+        windowsUser:
+          type: string
+        proxyUser:
+          type: string
+        agentHostname:
+          type: string
+
+    Recording:
+      type: object
+      properties:
+        id:
+          type: string
+        session_id:
+          type: string
+        target_id:
+          type: string
+        target_name:
+          type: string
+        windows_user:
+          type: string
+        proxy_user:
+          type: string
+        agent_hostname:
+          type: string
+        status:
+          type: string
+          enum: [recording, completed, failed]
+        started_at:
+          type: string
+          format: date-time
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_secs:
+          type: number
+        chunk_count:
+          type: integer
+        total_bytes:
+          type: integer
+        event_count:
+          type: integer
+
+    RecordingEvent:
+      type: object
+      properties:
+        ts:
+          type: string
+          format: date-time
+        type:
+          type: string
+          enum: [process_start, process_end, window_focus, session_start, session_end]
+        data:
+          type: object
+          additionalProperties: true
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      security: []
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /healthz:
+    get:
+      summary: Health check (alias)
+      security: []
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      summary: Readiness probe
+      security: []
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is not ready (no available ports)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/targets:
+    get:
+      summary: List targets with available users
+      description: Returns all targets with their available user accounts and credentials.
+      tags: [Targets]
+      responses:
+        '200':
+          description: List of targets with users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Target'
+              example:
+                - id: mike-rdp
+                  hostname: mike-rdp
+                  ip: 10.1.0.7
+                  users:
+                    - username: rdpadmin
+                      password: Password123abc
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/sessions:
+    post:
+      summary: Create RDP session
+      description: Creates a new RDP session to the specified target as the specified user.
+      tags: [Sessions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '400':
+          description: Bad request (missing target_id or username)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Target or username not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Session limit reached or credential provider unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: List sessions
+      description: Returns sessions for the specified user. Defaults to "anonymous" if no user_id provided.
+      tags: [Sessions]
+      parameters:
+        - name: user_id
+          in: query
+          schema:
+            type: string
+          description: Filter sessions by user ID
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Session'
+
+  /api/sessions/{id}:
+    get:
+      summary: Get session
+      tags: [Sessions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Terminate session
+      tags: [Sessions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Session terminated
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/sessions/{id}/rdp:
+    get:
+      summary: Download RDP file
+      description: Returns an .rdp file for connecting to the session via an RDP client.
+      tags: [Sessions]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: RDP file
+          content:
+            application/x-rdp:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/recordings:
+    post:
+      summary: Create recording
+      description: Called by the agent when a session starts recording.
+      tags: [Recordings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRecordingRequest'
+      responses:
+        '201':
+          description: Recording created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: List recordings
+      tags: [Recordings]
+      responses:
+        '200':
+          description: List of recordings
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Recording'
+
+  /api/recordings/{id}:
+    get:
+      summary: Get recording metadata
+      tags: [Recordings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recording metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+        '404':
+          description: Recording not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/recordings/{id}/chunks:
+    post:
+      summary: Upload video chunk
+      description: Upload a video segment from the recording agent.
+      tags: [Recordings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                chunk:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Chunk uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chunk_index:
+                    type: integer
+        '404':
+          description: Recording not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/recordings/{id}/events:
+    post:
+      summary: Send recording events
+      description: Send a batch of events from the recording agent.
+      tags: [Recordings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecordingEvent'
+      responses:
+        '200':
+          description: Events received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: integer
+        '404':
+          description: Recording not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: Get recording events
+      tags: [Recordings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RecordingEvent'
+        '404':
+          description: Recording not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/recordings/{id}/end:
+    put:
+      summary: End recording
+      description: Signal that recording has ended. Finalizes the video by concatenating chunks.
+      tags: [Recordings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Recording finalized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recording'
+        '404':
+          description: Recording not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/recordings/{id}/video:
+    get:
+      summary: Stream recording video
+      description: Serves the concatenated video file with HTTP range request support.
+      tags: [Recordings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Video file
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Recording or video not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

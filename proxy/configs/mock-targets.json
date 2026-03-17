@@ -1,36 +1,40 @@
 {
   "targets": {
     "dc-01": {
-      "name": "Domain Controller 01",
-      "hostname": "10.0.1.10",
+      "hostname": "dc-01",
+      "ip": "10.0.1.10",
       "port": 3389,
-      "username": "Administrator",
-      "password": "P@ssw0rd!",
-      "domain": "CORP"
+      "domain": "CORP",
+      "users": [
+        {"username": "Administrator", "password": "P@ssw0rd!"}
+      ]
     },
     "ws-05": {
-      "name": "Workstation 05",
-      "hostname": "10.0.1.50",
+      "hostname": "ws-05",
+      "ip": "10.0.1.50",
       "port": 3389,
-      "username": "svc-rdp",
-      "password": "Sup3rS3cret",
-      "domain": "CORP"
+      "domain": "CORP",
+      "users": [
+        {"username": "svc-rdp", "password": "Sup3rS3cret"}
+      ]
     },
     "db-01": {
-      "name": "Database Server 01",
-      "hostname": "10.0.2.10",
+      "hostname": "db-01",
+      "ip": "10.0.2.10",
       "port": 3389,
-      "username": "sa-admin",
-      "password": "DbS3rv3r!Pass",
-      "domain": "CORP"
+      "domain": "CORP",
+      "users": [
+        {"username": "sa-admin", "password": "DbS3rv3r!Pass"}
+      ]
     },
     "jump-01": {
-      "name": "Jump Server 01",
-      "hostname": "10.0.0.5",
+      "hostname": "jump-01",
+      "ip": "10.0.0.5",
       "port": 3389,
-      "username": "jump-admin",
-      "password": "JumpB0x!2024",
-      "domain": "CORP"
+      "domain": "CORP",
+      "users": [
+        {"username": "jump-admin", "password": "JumpB0x!2024"}
+      ]
     }
   }
 }

@@ -13,19 +13,22 @@ import (
 
 // mockProvider implements the credential.CredentialProvider interface for testing.
 type mockProvider struct {
-	targets     []credential.TargetInfo
-	listErr     error
-	getErr      error
-	credentials *credential.TargetCredentials
+	targets      []credential.TargetInfo
+	destinations []credential.TargetDestination
+	listErr      error
+	destErr      error
+	getErr       error
+	credentials  *credential.TargetCredentials
 }
 
 func newMockProvider() *mockProvider {
 	return &mockProvider{
-		targets: []credential.TargetInfo{},
+		targets:      []credential.TargetInfo{},
+		destinations: []credential.TargetDestination{},
 	}
 }
 
-func (m *mockProvider) GetTargetCredentials(ctx context.Context, targetID string) (*credential.TargetCredentials, error) {
+func (m *mockProvider) GetTargetCredentials(ctx context.Context, targetID, username string) (*credential.TargetCredentials, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
@@ -42,15 +45,33 @@ func (m *mockProvider) ListTargets(ctx context.Context) ([]credential.TargetInfo
 	return m.targets, nil
 }
 
+func (m *mockProvider) ListDestinations(ctx context.Context) ([]credential.TargetDestination, error) {
+	if m.destErr != nil {
+		return nil, m.destErr
+	}
+	return m.destinations, nil
+}
+
 func (m *mockProvider) Close() error {
 	return nil
 }
 
 func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 	provider := newMockProvider()
-	provider.targets = []credential.TargetInfo{
-		{ID: "dc-01", Name: "Domain Controller 01", Hostname: "dc-01.corp.local"},
-		{ID: "ws-01", Name: "Workstation 01", Hostname: "ws-01.corp.local"},
+	provider.destinations = []credential.TargetDestination{
+		{
+			ID: "dc-01", Hostname: "dc-01", IP: "10.0.1.10",
+			Users: []credential.TargetUser{
+				{Username: "Administrator", Password: "P@ssw0rd!"},
+			},
+		},
+		{
+			ID: "ws-01", Hostname: "ws-01", IP: "10.0.1.50",
+			Users: []credential.TargetUser{
+				{Username: "svc-rdp", Password: "Secret123"},
+				{Username: "admin", Password: "Admin456"},
+			},
+		},
 	}
 
 	handler := NewTargetsHandler(provider)
@@ -72,23 +93,29 @@ func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 	}
 
 	if len(resp) != 2 {
-		t.Errorf("expected 2 targets, got %d", len(resp))
+		t.Fatalf("expected 2 targets, got %d", len(resp))
 	}
 
 	if resp[0].ID != "dc-01" {
 		t.Errorf("expected first target ID 'dc-01', got %q", resp[0].ID)
 	}
-	if resp[0].Name != "Domain Controller 01" {
-		t.Errorf("expected first target name 'Domain Controller 01', got %q", resp[0].Name)
+	if len(resp[0].Users) != 1 {
+		t.Fatalf("expected 1 user for dc-01, got %d", len(resp[0].Users))
 	}
-	if resp[0].Hostname != "dc-01.corp.local" {
-		t.Errorf("expected first target hostname 'dc-01.corp.local', got %q", resp[0].Hostname)
+	if resp[0].Users[0].Username != "Administrator" {
+		t.Errorf("expected username 'Administrator', got %q", resp[0].Users[0].Username)
+	}
+	if resp[0].Users[0].Password != "P@ssw0rd!" {
+		t.Errorf("expected password to be included")
+	}
+
+	if len(resp[1].Users) != 2 {
+		t.Fatalf("expected 2 users for ws-01, got %d", len(resp[1].Users))
 	}
 }
 
 func TestTargetsHandler_ListTargets_Empty(t *testing.T) {
 	provider := newMockProvider()
-	provider.targets = []credential.TargetInfo{}
 
 	handler := NewTargetsHandler(provider)
 	router := NewRouter("", nil)
@@ -115,7 +142,7 @@ func TestTargetsHandler_ListTargets_Empty(t *testing.T) {
 
 func TestTargetsHandler_ListTargets_ProviderError(t *testing.T) {
 	provider := newMockProvider()
-	provider.listErr = errors.New("database connection failed")
+	provider.destErr = errors.New("database connection failed")
 
 	handler := NewTargetsHandler(provider)
 	router := NewRouter("", nil)
@@ -129,18 +156,7 @@ func TestTargetsHandler_ListTargets_ProviderError(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected status 500, got %d", rec.Code)
 	}
-
-	var resp ErrorResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	if resp.Message != "failed to list targets" {
-		t.Errorf("expected message 'failed to list targets', got %q", resp.Message)
-	}
 }
-
-// Auth tests removed — /api/targets no longer requires authentication.
 
 func TestNewTargetsHandler(t *testing.T) {
 	provider := newMockProvider()

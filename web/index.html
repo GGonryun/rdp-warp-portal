@@ -449,8 +449,14 @@
         </div>
         <div class="form-group">
           <label for="target-select">Target</label>
-          <select id="target-select">
-            <option value="">Loading targets...</option>
+          <select id="target-select" onchange="onTargetChange()">
+            <option value="">Loading destinations...</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="username-select">Login As</label>
+          <select id="username-select">
+            <option value="">Select a target first</option>
           </select>
         </div>
         <button class="btn-primary" id="create-btn" onclick="createSession()">
@@ -576,27 +582,49 @@
     }
   }
 
-  // Load targets
-  async function loadTargets() {
+  // Load targets (with users)
+  let destinations = [];
+
+  async function loadDestinations() {
     try {
       const resp = await apiFetch(API + '/api/targets');
-      const targets = await resp.json();
+      destinations = await resp.json();
       const select = document.getElementById('target-select');
       select.innerHTML = '';
-      if (targets.length === 0) {
-        select.innerHTML = '<option value="">No targets configured</option>';
+      if (destinations.length === 0) {
+        select.innerHTML = '<option value="">No destinations configured</option>';
         return;
       }
-      targets.forEach(t => {
+      destinations.forEach(d => {
         const opt = document.createElement('option');
-        opt.value = t.id;
-        opt.textContent = t.name + ' (' + t.hostname + ')';
+        opt.value = d.id;
+        opt.textContent = d.hostname + ' (' + d.ip + ')';
         select.appendChild(opt);
       });
+      onTargetChange();
     } catch (e) {
       document.getElementById('target-select').innerHTML =
-        '<option value="">Failed to load targets</option>';
+        '<option value="">Failed to load destinations</option>';
     }
+  }
+
+  function onTargetChange() {
+    const targetId = document.getElementById('target-select').value;
+    const usernameSelect = document.getElementById('username-select');
+    usernameSelect.innerHTML = '';
+
+    const dest = destinations.find(d => d.id === targetId);
+    if (!dest || !dest.users || dest.users.length === 0) {
+      usernameSelect.innerHTML = '<option value="">No users available</option>';
+      return;
+    }
+
+    dest.users.forEach(u => {
+      const opt = document.createElement('option');
+      opt.value = u.username;
+      opt.textContent = u.username;
+      usernameSelect.appendChild(opt);
+    });
   }
 
   // List sessions
@@ -660,8 +688,13 @@
   // Create session
   async function createSession() {
     const targetId = document.getElementById('target-select').value;
+    const username = document.getElementById('username-select').value;
     if (!targetId) {
       toast('Select a target first', 'error');
+      return;
+    }
+    if (!username) {
+      toast('Select a username first', 'error');
       return;
     }
 
@@ -675,6 +708,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           target_id: targetId,
+          username: username,
           user_id: getUserId()
         })
       });
@@ -973,7 +1007,7 @@
   if (savedKey) document.getElementById('api-key').value = savedKey;
 
   checkHealth();
-  loadTargets();
+  loadDestinations();
   loadSessions();
   setupAutoRefresh();
 </script>

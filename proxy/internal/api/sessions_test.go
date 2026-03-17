@@ -17,7 +17,7 @@ import (
 // mockManager implements the session manager interface for testing.
 type mockManager struct {
 	sessions          map[string]*session.Session
-	createSessionFunc func(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error)
+	createSessionFunc func(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error)
 	getSessionFunc    func(sessionID string) (*session.Session, error)
 	listSessionsFunc  func(userID string) []*session.Session
 	terminateFunc     func(ctx context.Context, sessionID string) error
@@ -35,9 +35,9 @@ func newMockManager() *mockManager {
 	}
 }
 
-func (m *mockManager) CreateSession(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error) {
+func (m *mockManager) CreateSession(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error) {
 	if m.createSessionFunc != nil {
-		return m.createSessionFunc(ctx, userID, targetID, clientIP)
+		return m.createSessionFunc(ctx, userID, targetID, username, clientIP)
 	}
 	return nil, errors.New("not implemented")
 }
@@ -120,13 +120,13 @@ func createTestSession(id, userID, targetID string) *session.Session {
 func TestSessionsHandler_CreateSession_Success(t *testing.T) {
 	mock := newMockManager()
 	testSession := createTestSession("sess-123", "user-1", "target-1")
-	mock.createSessionFunc = func(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error) {
+	mock.createSessionFunc = func(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error) {
 		return testSession, nil
 	}
 
 	handler := NewSessionsHandler(mock, "broker.local")
 
-	body := `{"target_id": "target-1", "user_id": "user-1"}`
+	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -207,13 +207,13 @@ func TestSessionsHandler_CreateSession_MissingTargetID(t *testing.T) {
 
 func TestSessionsHandler_CreateSession_TargetNotFound(t *testing.T) {
 	mock := newMockManager()
-	mock.createSessionFunc = func(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error) {
+	mock.createSessionFunc = func(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error) {
 		return nil, credential.ErrTargetNotFound
 	}
 
 	handler := NewSessionsHandler(mock, "broker.local")
 
-	body := `{"target_id": "nonexistent", "user_id": "user-1"}`
+	body := `{"target_id": "nonexistent", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -227,13 +227,13 @@ func TestSessionsHandler_CreateSession_TargetNotFound(t *testing.T) {
 
 func TestSessionsHandler_CreateSession_SessionLimitReached(t *testing.T) {
 	mock := newMockManager()
-	mock.createSessionFunc = func(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error) {
+	mock.createSessionFunc = func(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error) {
 		return nil, session.ErrSessionLimitReached
 	}
 
 	handler := NewSessionsHandler(mock, "broker.local")
 
-	body := `{"target_id": "target-1", "user_id": "user-1"}`
+	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -247,13 +247,13 @@ func TestSessionsHandler_CreateSession_SessionLimitReached(t *testing.T) {
 
 func TestSessionsHandler_CreateSession_ProviderUnavailable(t *testing.T) {
 	mock := newMockManager()
-	mock.createSessionFunc = func(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error) {
+	mock.createSessionFunc = func(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error) {
 		return nil, session.ErrProviderUnavailable
 	}
 
 	handler := NewSessionsHandler(mock, "broker.local")
 
-	body := `{"target_id": "target-1", "user_id": "user-1"}`
+	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -267,13 +267,13 @@ func TestSessionsHandler_CreateSession_ProviderUnavailable(t *testing.T) {
 
 func TestSessionsHandler_CreateSession_InternalError(t *testing.T) {
 	mock := newMockManager()
-	mock.createSessionFunc = func(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error) {
+	mock.createSessionFunc = func(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error) {
 		return nil, errors.New("unexpected error")
 	}
 
 	handler := NewSessionsHandler(mock, "broker.local")
 
-	body := `{"target_id": "target-1", "user_id": "user-1"}`
+	body := `{"target_id": "target-1", "username": "admin", "user_id": "user-1"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -285,18 +285,34 @@ func TestSessionsHandler_CreateSession_InternalError(t *testing.T) {
 	}
 }
 
+func TestSessionsHandler_CreateSession_MissingUsername(t *testing.T) {
+	mock := newMockManager()
+	handler := NewSessionsHandler(mock, "broker.local")
+
+	body := `{"target_id": "target-1"}`
+	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.CreateSession(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", rec.Code)
+	}
+}
+
 func TestSessionsHandler_CreateSession_AnonymousUser(t *testing.T) {
 	mock := newMockManager()
 	var capturedUserID string
-	mock.createSessionFunc = func(ctx context.Context, userID, targetID, clientIP string) (*session.Session, error) {
+	mock.createSessionFunc = func(ctx context.Context, userID, targetID, username, clientIP string) (*session.Session, error) {
 		capturedUserID = userID
 		return createTestSession("sess-123", userID, targetID), nil
 	}
 
 	handler := NewSessionsHandler(mock, "broker.local")
 
-	// No user_id in body, no JWT context
-	body := `{"target_id": "target-1"}`
+	// No user_id in body, no JWT context, but username is provided
+	body := `{"target_id": "target-1", "username": "admin"}`
 	req := httptest.NewRequest("POST", "/api/sessions", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

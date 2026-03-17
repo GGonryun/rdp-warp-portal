@@ -1,20 +1,22 @@
 {
   "targets": {
     "win-vm-1": {
-      "name": "Azure Windows VM",
-      "hostname": "20.64.171.136",
+      "hostname": "win-vm-1",
+      "ip": "20.64.171.136",
       "port": 3389,
-      "username": "rdpadmin",
-      "password": "YOUR_PASSWORD_HERE",
-      "domain": ""
+      "domain": "",
+      "users": [
+        {"username": "rdpadmin", "password": "YOUR_PASSWORD_HERE"}
+      ]
     },
     "dc-01": {
-      "name": "Domain Controller 01",
-      "hostname": "10.0.1.10",
+      "hostname": "dc-01",
+      "ip": "10.0.1.10",
       "port": 3389,
-      "username": "Administrator",
-      "password": "YOUR_PASSWORD_HERE",
-      "domain": "CORP"
+      "domain": "CORP",
+      "users": [
+        {"username": "Administrator", "password": "YOUR_PASSWORD_HERE"}
+      ]
     }
   }
 }
