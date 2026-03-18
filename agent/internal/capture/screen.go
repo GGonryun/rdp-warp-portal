@@ -1,7 +1,6 @@
 package capture
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,8 +9,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
+
+	"context"
 )
 
 // ScreenRecorder captures the screen using ffmpeg and produces video chunks.
@@ -20,13 +20,10 @@ type ScreenRecorder struct {
 	framerate  int
 	chunkSecs  int
 	outputDir  string
-	onChunk    func(chunkPath string)
-
-	mu         sync.Mutex
 	cmd        *exec.Cmd
 	stdin      io.WriteCloser
+	onChunk    func(chunkPath string)
 	cancel     context.CancelFunc
-	chunkIndex int // running chunk counter across ffmpeg restarts
 }
 
 // NewScreenRecorder creates a new screen recorder.
@@ -48,25 +45,6 @@ func (s *ScreenRecorder) Start(ctx context.Context) error {
 
 	ctx, s.cancel = context.WithCancel(ctx)
 
-	if err := s.startFfmpeg(ctx); err != nil {
-		return err
-	}
-
-	// Start chunk watcher goroutine.
-	go s.watchChunks(ctx)
-
-	// Start resolution monitor goroutine.
-	go s.monitorResolution(ctx)
-
-	return nil
-}
-
-// startFfmpeg launches a new ffmpeg process using the current chunkIndex for output naming.
-func (s *ScreenRecorder) startFfmpeg(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Use segment_start_number so chunk files continue from the current index.
 	outputPattern := filepath.Join(s.outputDir, "chunk_%03d.ts")
 
 	s.cmd = exec.CommandContext(ctx, s.ffmpegPath,
@@ -81,7 +59,6 @@ func (s *ScreenRecorder) startFfmpeg(ctx context.Context) error {
 		"-f", "segment",
 		"-segment_time", fmt.Sprintf("%d", s.chunkSecs),
 		"-segment_format", "mpegts",
-		"-segment_start_number", fmt.Sprintf("%d", s.chunkIndex),
 		"-reset_timestamps", "1",
 		outputPattern,
 	)
@@ -99,93 +76,44 @@ func (s *ScreenRecorder) startFfmpeg(ctx context.Context) error {
 		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 
-	slog.Info("ffmpeg started", "pid", s.cmd.Process.Pid, "chunk_start", s.chunkIndex)
+	slog.Info("ffmpeg started", "pid", s.cmd.Process.Pid, "output_dir", s.outputDir)
+
+	// Start chunk watcher goroutine.
+	go s.watchChunks(ctx)
+
 	return nil
-}
-
-// stopFfmpeg gracefully stops the current ffmpeg process and waits for it to flush.
-func (s *ScreenRecorder) stopFfmpeg() {
-	s.mu.Lock()
-	stdin := s.stdin
-	cmd := s.cmd
-	s.mu.Unlock()
-
-	if stdin != nil {
-		if _, err := stdin.Write([]byte("q")); err != nil {
-			slog.Warn("failed to send quit to ffmpeg", "error", err)
-		}
-		stdin.Close()
-	}
-
-	if cmd != nil && cmd.Process != nil {
-		done := make(chan error, 1)
-		go func() {
-			done <- cmd.Wait()
-		}()
-
-		select {
-		case err := <-done:
-			if err != nil {
-				slog.Debug("ffmpeg exited with error", "error", err)
-			}
-		case <-time.After(10 * time.Second):
-			slog.Warn("ffmpeg did not exit in time, killing")
-			cmd.Process.Kill()
-		}
-	}
-
-	// Count chunks on disk to update chunkIndex for the next ffmpeg instance.
-	s.mu.Lock()
-	s.chunkIndex = len(s.listChunksLocked())
-	s.mu.Unlock()
-}
-
-// restartFfmpeg gracefully stops the current ffmpeg and starts a new one.
-func (s *ScreenRecorder) restartFfmpeg(ctx context.Context) {
-	slog.Info("restarting ffmpeg due to resolution change")
-	s.stopFfmpeg()
-
-	// Brief pause to let file handles release.
-	time.Sleep(500 * time.Millisecond)
-
-	if err := s.startFfmpeg(ctx); err != nil {
-		slog.Error("failed to restart ffmpeg", "error", err)
-	}
-}
-
-// monitorResolution polls the screen resolution and restarts ffmpeg when it changes.
-func (s *ScreenRecorder) monitorResolution(ctx context.Context) {
-	w, h := getScreenResolution()
-	slog.Info("initial screen resolution", "width", w, "height", h)
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			newW, newH := getScreenResolution()
-			if newW != w || newH != h {
-				slog.Info("screen resolution changed",
-					"old_width", w, "old_height", h,
-					"new_width", newW, "new_height", newH,
-				)
-				w, h = newW, newH
-				s.restartFfmpeg(ctx)
-			}
-		}
-	}
 }
 
 // Stop sends 'q' to ffmpeg stdin for a clean shutdown.
 func (s *ScreenRecorder) Stop() error {
 	slog.Info("stopping screen recorder")
-	s.stopFfmpeg()
+
+	if s.stdin != nil {
+		if _, err := s.stdin.Write([]byte("q")); err != nil {
+			slog.Warn("failed to send quit to ffmpeg", "error", err)
+		}
+		s.stdin.Close()
+	}
 
 	if s.cancel != nil {
 		s.cancel()
+	}
+
+	if s.cmd != nil && s.cmd.Process != nil {
+		done := make(chan error, 1)
+		go func() {
+			done <- s.cmd.Wait()
+		}()
+
+		select {
+		case err := <-done:
+			if err != nil {
+				slog.Warn("ffmpeg exited with error", "error", err)
+			}
+		case <-time.After(10 * time.Second):
+			slog.Warn("ffmpeg did not exit in time, killing")
+			s.cmd.Process.Kill()
+		}
 	}
 
 	return nil
@@ -241,13 +169,6 @@ func (s *ScreenRecorder) reportRemainingChunks(lastReported string) {
 
 // listChunks returns all .ts chunk files in the output directory, sorted by name.
 func (s *ScreenRecorder) listChunks() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.listChunksLocked()
-}
-
-// listChunksLocked returns all .ts chunk files. Caller must hold s.mu.
-func (s *ScreenRecorder) listChunksLocked() []string {
 	entries, err := os.ReadDir(s.outputDir)
 	if err != nil {
 		return nil
