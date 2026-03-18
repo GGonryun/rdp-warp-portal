@@ -429,6 +429,9 @@
         <span id="api-key-eye">👁</span>
       </button>
     </div>
+    <label style="margin:0;display:flex;align-items:center;gap:0.3rem;cursor:pointer;font-size:0.8rem;color:var(--muted);">
+      <input type="checkbox" id="auto-refresh" checked> Auto-refresh
+    </label>
     <div class="health-badge">
       <div class="health-dot" id="health-dot"></div>
       <span id="health-text">Checking...</span>
@@ -488,12 +491,7 @@
     <div class="card">
       <div class="sessions-header">
         <h2>Sessions</h2>
-        <div style="display:flex;gap:0.5rem;align-items:center;">
-          <label style="margin:0;display:flex;align-items:center;gap:0.3rem;cursor:pointer;">
-            <input type="checkbox" id="auto-refresh" checked> Auto-refresh
-          </label>
-          <button class="btn-sm btn-refresh" onclick="loadSessions()">Refresh</button>
-        </div>
+        <button class="btn-sm btn-refresh" onclick="loadSessions()">Refresh</button>
       </div>
       <div id="sessions-container">
         <div class="empty-state">No sessions yet. Create one to get started.</div>
@@ -841,24 +839,31 @@
     loadSessions();
   }
 
-  // Auto-refresh
+  // Global auto-refresh — refreshes whichever tab is active.
+  function autoRefreshTick() {
+    if (activeTab === 'sessions') loadSessions();
+    else if (activeTab === 'recordings' && document.getElementById('recordings-list-view').style.display !== 'none') loadRecordings();
+    else if (activeTab === 'access') loadAccess();
+  }
+
   function setupAutoRefresh() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
     const checkbox = document.getElementById('auto-refresh');
     if (checkbox.checked) {
-      autoRefreshTimer = setInterval(loadSessions, 5000);
+      autoRefreshTimer = setInterval(autoRefreshTick, 5000);
     }
     checkbox.addEventListener('change', () => {
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
       if (checkbox.checked) {
-        autoRefreshTimer = setInterval(loadSessions, 5000);
+        autoRefreshTimer = setInterval(autoRefreshTick, 5000);
       }
     });
   }
 
   // Tab switching
   let activeTab = 'sessions';
-  let recordingsRefreshTimer = null;
+  let recordingsRefreshTimer = null; // unused, kept for compat
 
   function switchTab(tab) {
     activeTab = tab;
@@ -870,9 +875,6 @@
     });
     if (tab === 'recordings') {
       loadRecordings();
-      startRecordingsAutoRefresh();
-    } else {
-      stopRecordingsAutoRefresh();
     }
     if (tab === 'access') {
       loadAccess();
@@ -880,19 +882,11 @@
   }
 
   function startRecordingsAutoRefresh() {
-    stopRecordingsAutoRefresh();
-    recordingsRefreshTimer = setInterval(() => {
-      if (activeTab === 'recordings' && document.getElementById('recordings-list-view').style.display !== 'none') {
-        loadRecordings();
-      }
-    }, 5000);
+    // No-op: handled by global auto-refresh.
   }
 
   function stopRecordingsAutoRefresh() {
-    if (recordingsRefreshTimer) {
-      clearInterval(recordingsRefreshTimer);
-      recordingsRefreshTimer = null;
-    }
+    // No-op: handled by global auto-refresh.
   }
 
   // Recordings
