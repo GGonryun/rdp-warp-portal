@@ -8,6 +8,6 @@ import (
 )
 
 // launchInSession is not supported on non-Windows platforms.
-func launchInSession(sessionID uint32, exePath string, args []string, stderrPath string) (*os.Process, error) {
-	return nil, fmt.Errorf("launchInSession is only supported on Windows")
+func launchInSession(sessionID uint32, exePath string, args []string, stderrPath string) (int, *os.File, error) {
+	return 0, nil, fmt.Errorf("launchInSession is only supported on Windows")
 }

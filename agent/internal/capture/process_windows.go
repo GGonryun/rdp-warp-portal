@@ -18,9 +18,12 @@ var (
 	wtsapi32Token         = syscall.NewLazyDLL("wtsapi32.dll")
 	procWTSQueryUserToken = wtsapi32Token.NewProc("WTSQueryUserToken")
 
-	userenv32                 = syscall.NewLazyDLL("userenv.dll")
-	procCreateEnvironmentBlock = userenv32.NewProc("CreateEnvironmentBlock")
+	userenv32                   = syscall.NewLazyDLL("userenv.dll")
+	procCreateEnvironmentBlock  = userenv32.NewProc("CreateEnvironmentBlock")
 	procDestroyEnvironmentBlock = userenv32.NewProc("DestroyEnvironmentBlock")
+
+	kernel32Proc             = syscall.NewLazyDLL("kernel32.dll")
+	procSetHandleInformation = kernel32Proc.NewProc("SetHandleInformation")
 )
 
 const (
@@ -28,14 +31,18 @@ const (
 	securityImpersonation = 2
 	createUnicodeEnv      = 0x00000400
 	createNoWindow        = 0x08000000
+	handleFlagInherit     = 0x00000001
 )
 
 // launchInSession starts a process in the specified Windows session using
 // WTSQueryUserToken + CreateProcessAsUser. This allows a Session 0 service
 // to launch ffmpeg with access to a user's desktop for screen capture.
 //
+// Returns the PID and a writable stdin pipe. Writing "q" to the pipe
+// triggers ffmpeg's graceful shutdown (finishes current segment, then exits).
+//
 // stderrPath, if non-empty, redirects the process's stderr to that file for debugging.
-func launchInSession(sessionID uint32, exePath string, args []string, stderrPath string) (*os.Process, error) {
+func launchInSession(sessionID uint32, exePath string, args []string, stderrPath string) (int, *os.File, error) {
 	// Get the user token for the target session.
 	var userToken syscall.Handle
 	ret, _, err := procWTSQueryUserToken.Call(
@@ -43,7 +50,7 @@ func launchInSession(sessionID uint32, exePath string, args []string, stderrPath
 		uintptr(unsafe.Pointer(&userToken)),
 	)
 	if ret == 0 {
-		return nil, fmt.Errorf("WTSQueryUserToken for session %d: %w", sessionID, err)
+		return 0, nil, fmt.Errorf("WTSQueryUserToken for session %d: %w", sessionID, err)
 	}
 	defer syscall.CloseHandle(userToken)
 
@@ -58,7 +65,7 @@ func launchInSession(sessionID uint32, exePath string, args []string, stderrPath
 		uintptr(unsafe.Pointer(&dupToken)),
 	)
 	if ret == 0 {
-		return nil, fmt.Errorf("DuplicateTokenEx: %w", err)
+		return 0, nil, fmt.Errorf("DuplicateTokenEx: %w", err)
 	}
 	defer syscall.CloseHandle(dupToken)
 
@@ -71,9 +78,28 @@ func launchInSession(sessionID uint32, exePath string, args []string, stderrPath
 		0, // don't inherit current process env
 	)
 	if ret == 0 {
-		return nil, fmt.Errorf("CreateEnvironmentBlock: %w", err)
+		return 0, nil, fmt.Errorf("CreateEnvironmentBlock: %w", err)
 	}
 	defer procDestroyEnvironmentBlock.Call(envBlock)
+
+	// Create an anonymous pipe for stdin so we can send 'q' to ffmpeg
+	// for graceful shutdown. os.Pipe() creates a pair of connected files.
+	pipeR, pipeW, err := os.Pipe()
+	if err != nil {
+		return 0, nil, fmt.Errorf("create stdin pipe: %w", err)
+	}
+
+	// Mark the read end as inheritable so the child process can use it.
+	ret, _, err = procSetHandleInformation.Call(
+		pipeR.Fd(),
+		handleFlagInherit,
+		handleFlagInherit,
+	)
+	if ret == 0 {
+		pipeR.Close()
+		pipeW.Close()
+		return 0, nil, fmt.Errorf("SetHandleInformation: %w", err)
+	}
 
 	// Build the command line.
 	cmdLine := `"` + exePath + `"`
@@ -82,7 +108,9 @@ func launchInSession(sessionID uint32, exePath string, args []string, stderrPath
 	}
 	cmdLinePtr, err := syscall.UTF16PtrFromString(cmdLine)
 	if err != nil {
-		return nil, fmt.Errorf("UTF16PtrFromString: %w", err)
+		pipeR.Close()
+		pipeW.Close()
+		return 0, nil, fmt.Errorf("UTF16PtrFromString: %w", err)
 	}
 
 	var si syscall.StartupInfo
@@ -91,14 +119,15 @@ func launchInSession(sessionID uint32, exePath string, args []string, stderrPath
 	desktop, _ := syscall.UTF16PtrFromString(`WinSta0\Default`)
 	si.Desktop = desktop
 
+	// Set stdin to the read end of the pipe.
+	si.StdInput = syscall.Handle(pipeR.Fd())
+	si.Flags |= syscall.STARTF_USESTDHANDLES
+
 	// Optionally redirect stderr to a file for debugging.
-	inheritHandles := uintptr(0)
 	if stderrPath != "" {
 		f, ferr := os.Create(stderrPath)
 		if ferr == nil {
 			si.StdErr = syscall.Handle(f.Fd())
-			si.Flags |= syscall.STARTF_USESTDHANDLES
-			inheritHandles = 1 // must inherit handles for stderr redirect
 			defer f.Close()
 		}
 	}
@@ -111,26 +140,24 @@ func launchInSession(sessionID uint32, exePath string, args []string, stderrPath
 		uintptr(unsafe.Pointer(cmdLinePtr)),
 		0, // lpProcessAttributes
 		0, // lpThreadAttributes
-		inheritHandles,
+		1, // bInheritHandles = true (needed for stdin pipe)
 		createNoWindow|createUnicodeEnv,
 		envBlock, // user's environment
 		0,        // lpCurrentDirectory — inherit
 		uintptr(unsafe.Pointer(&si)),
 		uintptr(unsafe.Pointer(&pi)),
 	)
+
+	// Close the read end — the child has it now, parent only needs the write end.
+	pipeR.Close()
+
 	if ret == 0 {
-		return nil, fmt.Errorf("CreateProcessAsUser: %w", err)
+		pipeW.Close()
+		return 0, nil, fmt.Errorf("CreateProcessAsUser: %w", err)
 	}
 
-	// Close the thread handle; we only need the process handle.
 	syscall.CloseHandle(pi.Thread)
+	syscall.CloseHandle(pi.Process)
 
-	// Wrap in an os.Process for management.
-	proc, err := os.FindProcess(int(pi.ProcessId))
-	if err != nil {
-		syscall.CloseHandle(pi.Process)
-		return nil, fmt.Errorf("FindProcess: %w", err)
-	}
-
-	return proc, nil
+	return int(pi.ProcessId), pipeW, nil
 }

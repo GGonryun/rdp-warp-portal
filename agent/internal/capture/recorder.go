@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,11 +60,19 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 	r.recordingID = rec.ID
 	slog.Info("recording created", "recording_id", r.recordingID, "session_id", sessionInfo.ID)
 
-	// Create temp directory for video chunks.
-	r.outputDir, err = os.MkdirTemp("", fmt.Sprintf("p0rtal-recording-%s-", r.recordingID))
-	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
+	// Create output directory for video chunks under C:\p0rtal\recordings.
+	// This must be accessible by any user session (ffmpeg runs as the logged-in user).
+	recordingsBase := filepath.Join(filepath.Dir(r.config.FfmpegPath), "recordings")
+	if err := os.MkdirAll(recordingsBase, 0o777); err != nil {
+		return fmt.Errorf("create recordings base dir: %w", err)
 	}
+	r.outputDir = filepath.Join(recordingsBase, r.recordingID)
+	if err := os.MkdirAll(r.outputDir, 0o777); err != nil {
+		return fmt.Errorf("create output dir: %w", err)
+	}
+	// Grant all users write access (Windows ignores Unix mode bits).
+	exec.Command("icacls", r.outputDir, "/grant", "Everyone:(OI)(CI)F", "/T").Run()
+	exec.Command("icacls", recordingsBase, "/grant", "Everyone:(OI)(CI)F", "/T").Run()
 
 	ctx, r.cancel = context.WithCancel(ctx)
 
@@ -73,6 +83,7 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 		r.config.ChunkSecs,
 		r.outputDir,
 		sessionInfo.ID,
+		r.config.ResizePollMs,
 		r.handleChunk,
 	)
 	if err := r.screen.Start(ctx); err != nil {
@@ -97,12 +108,6 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 	// Start clipboard tracker.
 	r.clipboard = NewClipboardTracker(1*time.Second, r.handleClipboardEvent)
 	go r.clipboard.Run(ctx)
-
-	// Start Windows Event Log capture.
-	r.winlog = NewWinLogCapture(r.handleWinLogEvent)
-	if err := r.winlog.Start(ctx); err != nil {
-		slog.Warn("failed to start windows event log capture", "error", err)
-	}
 
 	// Start event flush goroutine.
 	go r.flushLoop(ctx)
@@ -129,12 +134,7 @@ func (r *Recorder) Stop() error {
 		}
 	}
 
-	// Stop Windows Event Log capture.
-	if r.winlog != nil {
-		if err := r.winlog.Stop(); err != nil {
-			slog.Warn("error stopping winlog capture", "error", err)
-		}
-	}
+
 
 	// Cancel context (stops window tracker and flush loop).
 	if r.cancel != nil {

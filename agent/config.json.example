@@ -1,7 +1,9 @@
 {
-    "proxy_url": "http://your-broker-host:8080",
-    "ffmpeg_path": "C:\\ffmpeg\\bin\\ffmpeg.exe",
-    "framerate": 5,
-    "chunk_secs": 30,
-    "poll_interval": 5
+  "proxy_url": "http://your-broker-host:8080",
+  "api_key": "2469967f8a3115a142d80ea2ea92e9fc",
+  "ffmpeg_path": "C:\\ffmpeg\\bin\\ffmpeg.exe",
+  "framerate": 5,
+  "chunk_secs": 30,
+  "poll_interval": 5,
+  "resize_poll_ms": 1000
 }

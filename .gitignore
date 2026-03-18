@@ -8,6 +8,7 @@ proxy/targets.json
 targets.json
 config.json
 *.rdp
+*.lab
 
 # Build artifacts
 broker
