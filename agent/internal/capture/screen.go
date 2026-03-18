@@ -99,7 +99,8 @@ func (s *ScreenRecorder) launchFFmpeg(ctx context.Context) error {
 
 	if s.sessionID > 0 {
 		// Launch in the target user's session.
-		proc, err := launchInSession(s.sessionID, s.ffmpegPath, args)
+		stderrLog := filepath.Join(s.outputDir, "ffmpeg.log")
+		proc, err := launchInSession(s.sessionID, s.ffmpegPath, args, stderrLog)
 		if err != nil {
 			return fmt.Errorf("launch ffmpeg in session %d: %w", s.sessionID, err)
 		}
