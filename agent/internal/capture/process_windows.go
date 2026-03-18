@@ -13,24 +13,29 @@ import (
 var (
 	advapi32                 = syscall.NewLazyDLL("advapi32.dll")
 	procCreateProcessAsUserW = advapi32.NewProc("CreateProcessAsUserW")
+	procDuplicateTokenEx     = advapi32.NewProc("DuplicateTokenEx")
 
-	wtsapi32Token          = syscall.NewLazyDLL("wtsapi32.dll")
-	procWTSQueryUserToken  = wtsapi32Token.NewProc("WTSQueryUserToken")
+	wtsapi32Token         = syscall.NewLazyDLL("wtsapi32.dll")
+	procWTSQueryUserToken = wtsapi32Token.NewProc("WTSQueryUserToken")
 
-	procDuplicateTokenEx = advapi32.NewProc("DuplicateTokenEx")
+	userenv32                 = syscall.NewLazyDLL("userenv.dll")
+	procCreateEnvironmentBlock = userenv32.NewProc("CreateEnvironmentBlock")
+	procDestroyEnvironmentBlock = userenv32.NewProc("DestroyEnvironmentBlock")
 )
 
 const (
-	tokenPrimary           = 1
-	securityImpersonation  = 2
-	createUnicodeEnv       = 0x00000400
-	createNoWindow         = 0x08000000
+	tokenPrimary          = 1
+	securityImpersonation = 2
+	createUnicodeEnv      = 0x00000400
+	createNoWindow        = 0x08000000
 )
 
 // launchInSession starts a process in the specified Windows session using
 // WTSQueryUserToken + CreateProcessAsUser. This allows a Session 0 service
 // to launch ffmpeg with access to a user's desktop for screen capture.
-func launchInSession(sessionID uint32, exePath string, args []string) (*os.Process, error) {
+//
+// stderrPath, if non-empty, redirects the process's stderr to that file for debugging.
+func launchInSession(sessionID uint32, exePath string, args []string, stderrPath string) (*os.Process, error) {
 	// Get the user token for the target session.
 	var userToken syscall.Handle
 	ret, _, err := procWTSQueryUserToken.Call(
@@ -47,7 +52,7 @@ func launchInSession(sessionID uint32, exePath string, args []string) (*os.Proce
 	ret, _, err = procDuplicateTokenEx.Call(
 		uintptr(userToken),
 		0x02000000, // MAXIMUM_ALLOWED
-		0, // default security attributes
+		0,          // default security attributes
 		securityImpersonation,
 		tokenPrimary,
 		uintptr(unsafe.Pointer(&dupToken)),
@@ -56,6 +61,19 @@ func launchInSession(sessionID uint32, exePath string, args []string) (*os.Proce
 		return nil, fmt.Errorf("DuplicateTokenEx: %w", err)
 	}
 	defer syscall.CloseHandle(dupToken)
+
+	// Create the user's environment block so ffmpeg gets the correct
+	// session environment (display settings, temp dirs, etc.).
+	var envBlock uintptr
+	ret, _, err = procCreateEnvironmentBlock.Call(
+		uintptr(unsafe.Pointer(&envBlock)),
+		uintptr(dupToken),
+		0, // don't inherit current process env
+	)
+	if ret == 0 {
+		return nil, fmt.Errorf("CreateEnvironmentBlock: %w", err)
+	}
+	defer procDestroyEnvironmentBlock.Call(envBlock)
 
 	// Build the command line.
 	cmdLine := `"` + exePath + `"`
@@ -73,6 +91,18 @@ func launchInSession(sessionID uint32, exePath string, args []string) (*os.Proce
 	desktop, _ := syscall.UTF16PtrFromString(`WinSta0\Default`)
 	si.Desktop = desktop
 
+	// Optionally redirect stderr to a file for debugging.
+	inheritHandles := uintptr(0)
+	if stderrPath != "" {
+		f, ferr := os.Create(stderrPath)
+		if ferr == nil {
+			si.StdErr = syscall.Handle(f.Fd())
+			si.Flags |= syscall.STARTF_USESTDHANDLES
+			inheritHandles = 1 // must inherit handles for stderr redirect
+			defer f.Close()
+		}
+	}
+
 	var pi syscall.ProcessInformation
 
 	ret, _, err = procCreateProcessAsUserW.Call(
@@ -81,10 +111,10 @@ func launchInSession(sessionID uint32, exePath string, args []string) (*os.Proce
 		uintptr(unsafe.Pointer(cmdLinePtr)),
 		0, // lpProcessAttributes
 		0, // lpThreadAttributes
-		0, // bInheritHandles = false
+		inheritHandles,
 		createNoWindow|createUnicodeEnv,
-		0, // lpEnvironment — inherit
-		0, // lpCurrentDirectory — inherit
+		envBlock, // user's environment
+		0,        // lpCurrentDirectory — inherit
 		uintptr(unsafe.Pointer(&si)),
 		uintptr(unsafe.Pointer(&pi)),
 	)
