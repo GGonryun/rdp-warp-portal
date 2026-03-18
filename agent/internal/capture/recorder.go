@@ -170,26 +170,28 @@ func (r *Recorder) Stop() error {
 	return nil
 }
 
-// handleChunk uploads a video chunk to the server.
+// handleChunk uploads a video chunk to the server in a background goroutine.
 func (r *Recorder) handleChunk(chunkPath string) {
-	slog.Info("uploading chunk", "path", chunkPath, "recording_id", r.recordingID)
+	go func() {
+		slog.Info("uploading chunk", "path", chunkPath, "recording_id", r.recordingID)
 
-	f, err := os.Open(chunkPath)
-	if err != nil {
-		slog.Error("failed to open chunk", "path", chunkPath, "error", err)
-		return
-	}
-	defer f.Close()
+		f, err := os.Open(chunkPath)
+		if err != nil {
+			slog.Error("failed to open chunk", "path", chunkPath, "error", err)
+			return
+		}
+		defer f.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
 
-	if err := r.client.UploadChunk(ctx, r.recordingID, f); err != nil {
-		slog.Error("failed to upload chunk", "path", chunkPath, "error", err)
-		return
-	}
+		if err := r.client.UploadChunk(ctx, r.recordingID, f); err != nil {
+			slog.Error("failed to upload chunk", "path", chunkPath, "error", err)
+			return
+		}
 
-	slog.Info("chunk uploaded", "path", chunkPath)
+		slog.Info("chunk uploaded", "path", chunkPath)
+	}()
 }
 
 // isAgentProcess returns true if the process is part of the agent itself and should be filtered.
@@ -292,8 +294,23 @@ func (r *Recorder) handleClipboardEvent(ce ClipboardEvent) {
 	r.mu.Unlock()
 }
 
+// isAgentWinLogEvent returns true if the Windows Event Log entry is about the agent itself.
+func isAgentWinLogEvent(message string) bool {
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "agent.exe") || strings.Contains(lower, "p0rtal-agent") || strings.Contains(lower, "p0rtal") {
+		return true
+	}
+	if strings.Contains(lower, "ffmpeg.exe") || strings.Contains(lower, "ffmpeg") {
+		return true
+	}
+	return false
+}
+
 // handleWinLogEvent converts a WinLogEvent to a RecordingEvent and buffers it.
 func (r *Recorder) handleWinLogEvent(we WinLogEvent) {
+	if isAgentWinLogEvent(we.Message) {
+		return
+	}
 	data := map[string]any{
 		"event_id": we.EventID,
 		"log":      we.Log,
@@ -321,7 +338,7 @@ func (r *Recorder) handleWinLogEvent(we WinLogEvent) {
 
 // flushLoop periodically flushes buffered events to the server.
 func (r *Recorder) flushLoop(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {

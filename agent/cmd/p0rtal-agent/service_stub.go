@@ -11,9 +11,29 @@ func isWindowsService() bool {
 func runAsService() {}
 
 func installService(_ string) error {
-	return fmt.Errorf("windows service install is only supported on Windows")
+	return fmt.Errorf("service commands are only supported on Windows")
 }
 
 func uninstallService() error {
-	return fmt.Errorf("windows service uninstall is only supported on Windows")
+	return fmt.Errorf("service commands are only supported on Windows")
+}
+
+func reinstallService(_ string) error {
+	return fmt.Errorf("service commands are only supported on Windows")
+}
+
+func startService() error {
+	return fmt.Errorf("service commands are only supported on Windows")
+}
+
+func stopService() error {
+	return fmt.Errorf("service commands are only supported on Windows")
+}
+
+func queryService() error {
+	return fmt.Errorf("service commands are only supported on Windows")
+}
+
+func tailLogs() error {
+	return fmt.Errorf("service commands are only supported on Windows")
 }

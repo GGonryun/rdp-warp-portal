@@ -18,7 +18,7 @@ import (
 	"github.com/p0-security/p0rtal-agent/internal/session"
 )
 
-const serviceName = "p0rtal-agent"
+const serviceName = "p0rtal"
 
 func main() {
 	if len(os.Args) > 1 {
@@ -36,6 +36,40 @@ func main() {
 		case "uninstall":
 			if err := uninstallService(); err != nil {
 				fmt.Fprintf(os.Stderr, "uninstall failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "reinstall":
+			configPath := "config.json"
+			if len(os.Args) > 2 {
+				configPath = os.Args[2]
+			}
+			if err := reinstallService(configPath); err != nil {
+				fmt.Fprintf(os.Stderr, "reinstall failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "start":
+			if err := startService(); err != nil {
+				fmt.Fprintf(os.Stderr, "start failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "stop":
+			if err := stopService(); err != nil {
+				fmt.Fprintf(os.Stderr, "stop failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "status":
+			if err := queryService(); err != nil {
+				fmt.Fprintf(os.Stderr, "status failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "log", "logs":
+			if err := tailLogs(); err != nil {
+				fmt.Fprintf(os.Stderr, "log failed: %v\n", err)
 				os.Exit(1)
 			}
 			return
