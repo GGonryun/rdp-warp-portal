@@ -353,7 +353,10 @@ func (g *Gatekeeper) readX224Packet(conn net.Conn) ([]byte, *ParsedCookie, error
 	var cookie *ParsedCookie
 	if len(remainingBuf) > X224HeaderSize {
 		variableData := remainingBuf[X224HeaderSize:]
+		slog.Info("gatekeeper: X.224 variable data", "session_id", g.sessionID, "data_hex", fmt.Sprintf("%x", variableData), "data_str", string(variableData))
 		cookie, _ = parseCookie(variableData) // Ignore error - cookie is optional
+	} else {
+		slog.Warn("gatekeeper: X.224 packet has no variable data", "session_id", g.sessionID, "remaining_len", len(remainingBuf))
 	}
 
 	return fullPacket, cookie, nil
@@ -387,7 +390,8 @@ func parseCookie(data []byte) (*ParsedCookie, error) {
 		return nil, fmt.Errorf("%w: expected 3 parts (username#target_id#token), got %d", ErrInvalidCookieFormat, len(parts))
 	}
 
-	userID := parts[0]
+	// Decode %40 back to @ (encoded in RDP file to prevent UPN splitting)
+	userID := strings.ReplaceAll(parts[0], "%40", "@")
 	targetID := parts[1]
 	token := parts[2]
 
