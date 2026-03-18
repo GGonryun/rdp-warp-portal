@@ -124,7 +124,7 @@ func (s *ScreenRecorder) Stop() error {
 func (s *ScreenRecorder) watchChunks(ctx context.Context) {
 	var lastReported string
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {

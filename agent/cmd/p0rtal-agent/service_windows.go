@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/eventlog"
@@ -135,10 +138,13 @@ func installService(configPath string) error {
 	}
 
 	fmt.Printf("Service %q installed successfully.\n", serviceName)
-	fmt.Println("Place config.json next to agent.exe, then start with:")
-	fmt.Println("  sc start p0rtal-agent")
-	fmt.Println()
-	fmt.Println("Or start from Services (services.msc).")
+
+	// Auto-start after install.
+	if err := startService(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: installed but failed to start: %v\n", err)
+		fmt.Println("Start manually with: .\\agent.exe start")
+	}
+
 	return nil
 }
 
@@ -156,6 +162,21 @@ func uninstallService() error {
 	}
 	defer s.Close()
 
+	// Stop if running.
+	status, err := s.Query()
+	if err == nil && status.State != svc.Stopped {
+		fmt.Println("Stopping service...")
+		_, _ = s.Control(svc.Stop)
+		// Wait for it to stop.
+		for i := 0; i < 30; i++ {
+			time.Sleep(500 * time.Millisecond)
+			status, err = s.Query()
+			if err != nil || status.State == svc.Stopped {
+				break
+			}
+		}
+	}
+
 	if err := s.Delete(); err != nil {
 		return fmt.Errorf("delete service: %w", err)
 	}
@@ -164,4 +185,155 @@ func uninstallService() error {
 
 	fmt.Printf("Service %q uninstalled successfully.\n", serviceName)
 	return nil
+}
+
+// reinstallService stops, uninstalls, and re-installs the service.
+func reinstallService(configPath string) error {
+	fmt.Println("Reinstalling service...")
+
+	// Uninstall (ignoring "not found" errors).
+	if err := uninstallService(); err != nil {
+		// Only fail if it's not a "not found" error.
+		if !strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("uninstall: %w", err)
+		}
+		fmt.Println("Service was not previously installed, proceeding with install.")
+	}
+
+	// Brief pause to let SCM release handles.
+	time.Sleep(1 * time.Second)
+
+	return installService(configPath)
+}
+
+// startService starts the Windows service.
+func startService() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("connect to service manager: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return fmt.Errorf("service %q not found: %w", serviceName, err)
+	}
+	defer s.Close()
+
+	if err := s.Start(); err != nil {
+		return fmt.Errorf("start service: %w", err)
+	}
+
+	fmt.Printf("Service %q started.\n", serviceName)
+	return nil
+}
+
+// stopService stops the Windows service.
+func stopService() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("connect to service manager: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return fmt.Errorf("service %q not found: %w", serviceName, err)
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("query service: %w", err)
+	}
+	if status.State == svc.Stopped {
+		fmt.Printf("Service %q is already stopped.\n", serviceName)
+		return nil
+	}
+
+	_, err = s.Control(svc.Stop)
+	if err != nil {
+		return fmt.Errorf("stop service: %w", err)
+	}
+
+	// Wait for stop.
+	for i := 0; i < 30; i++ {
+		time.Sleep(500 * time.Millisecond)
+		status, err = s.Query()
+		if err != nil || status.State == svc.Stopped {
+			break
+		}
+	}
+
+	fmt.Printf("Service %q stopped.\n", serviceName)
+	return nil
+}
+
+// queryService prints the current service status.
+func queryService() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("connect to service manager: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		fmt.Printf("Service %q: NOT INSTALLED\n", serviceName)
+		return nil
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("query service: %w", err)
+	}
+
+	stateStr := "UNKNOWN"
+	switch status.State {
+	case svc.Stopped:
+		stateStr = "STOPPED"
+	case svc.StartPending:
+		stateStr = "START_PENDING"
+	case svc.StopPending:
+		stateStr = "STOP_PENDING"
+	case svc.Running:
+		stateStr = "RUNNING"
+	case svc.ContinuePending:
+		stateStr = "CONTINUE_PENDING"
+	case svc.PausePending:
+		stateStr = "PAUSE_PENDING"
+	case svc.Paused:
+		stateStr = "PAUSED"
+	}
+
+	fmt.Printf("Service %q: %s (PID: %d)\n", serviceName, stateStr, status.ProcessId)
+	return nil
+}
+
+// tailLogs streams the service logs in real time using PowerShell.
+func tailLogs() error {
+	fmt.Printf("Tailing logs for service %q (Ctrl+C to stop)...\n\n", serviceName)
+
+	script := fmt.Sprintf(`
+$svcName = '%s'
+$lastTime = (Get-Date).AddSeconds(-10)
+while ($true) {
+    $events = Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName=$svcName;StartTime=$lastTime} -ErrorAction SilentlyContinue
+    if ($events) {
+        $events | Sort-Object TimeCreated | ForEach-Object {
+            $ts = $_.TimeCreated.ToString('HH:mm:ss')
+            Write-Host "[$ts] $($_.Message)"
+        }
+        $lastTime = ($events | Sort-Object TimeCreated | Select-Object -Last 1).TimeCreated.AddMilliseconds(1)
+    }
+    Start-Sleep 2
+}
+`, serviceName)
+
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", script)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
 }
