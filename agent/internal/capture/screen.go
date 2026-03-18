@@ -73,6 +73,7 @@ func (s *ScreenRecorder) startFfmpeg(ctx context.Context) error {
 		"-f", "gdigrab",
 		"-framerate", fmt.Sprintf("%d", s.framerate),
 		"-i", "desktop",
+		"-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
 		"-c:v", "libx264",
 		"-preset", "ultrafast",
 		"-crf", "28",
