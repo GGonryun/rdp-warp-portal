@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -17,32 +18,68 @@ import (
 	"github.com/p0-security/p0rtal-agent/internal/session"
 )
 
+const serviceName = "p0rtal-agent"
+
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "install":
+			configPath := "config.json"
+			if len(os.Args) > 2 {
+				configPath = os.Args[2]
+			}
+			if err := installService(configPath); err != nil {
+				fmt.Fprintf(os.Stderr, "install failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "uninstall":
+			if err := uninstallService(); err != nil {
+				fmt.Fprintf(os.Stderr, "uninstall failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	// Detect if running as a Windows service or interactively.
+	if isWindowsService() {
+		runAsService()
+		return
+	}
+
+	// Interactive mode.
 	configPath := flag.String("config", "config.json", "path to config file")
 	flag.Parse()
 
-	// Set up structured logging.
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
 
-	// Load configuration.
-	cfg, err := config.Load(*configPath)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := runAgent(ctx, *configPath); err != nil {
+		slog.Error("agent failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+// runAgent is the core agent logic shared by both interactive and service mode.
+func runAgent(ctx context.Context, configPath string) error {
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.Warn("failed to load config file, falling back to env", "path", *configPath, "error", err)
+		slog.Warn("failed to load config file, falling back to env", "path", configPath, "error", err)
 		cfg = config.LoadFromEnv()
 	}
 
 	if cfg.ProxyURL == "" {
-		slog.Error("proxy_url is required (set in config file or PROXY_URL env var)")
-		os.Exit(1)
+		return fmt.Errorf("proxy_url is required (set in config file or PROXY_URL env var)")
 	}
 
-	// Ensure ffmpeg is available (downloads if missing).
 	ffmpegPath, err := ffmpeg.EnsureInstalled(cfg.FfmpegPath)
 	if err != nil {
-		slog.Error("ffmpeg is required but could not be found or installed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("ffmpeg is required but could not be found or installed: %w", err)
 	}
 	cfg.FfmpegPath = ffmpegPath
 
@@ -55,10 +92,9 @@ func main() {
 		"poll_interval", cfg.PollInterval,
 	)
 
-	// Create API client.
 	apiClient := client.New(cfg.ProxyURL, cfg.APIKey)
 
-	// Verify broker connectivity before starting.
+	// Verify broker connectivity.
 	slog.Info("connecting to broker...", "proxy_url", cfg.ProxyURL)
 	{
 		delays := []time.Duration{
@@ -71,34 +107,37 @@ func main() {
 		}
 		var lastErr error
 		for attempt := 0; ; attempt++ {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			lastErr = apiClient.HealthCheck(ctx)
+			hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			lastErr = apiClient.HealthCheck(hctx)
 			cancel()
 			if lastErr == nil {
 				slog.Info("broker connection established")
 				break
 			}
 			if attempt >= len(delays) {
-				slog.Error("failed to connect to broker after retries, exiting", "error", lastErr)
-				os.Exit(1)
+				return fmt.Errorf("failed to connect to broker after retries: %w", lastErr)
+			}
+			// Check if we were asked to stop.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
 			}
 			slog.Warn("broker not reachable, retrying...",
 				"error", lastErr,
 				"retry_in", delays[attempt].String(),
 			)
-			time.Sleep(delays[attempt])
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delays[attempt]):
+			}
 		}
 	}
 
-	// Track active recorders by session ID.
 	var mu sync.Mutex
 	recorders := make(map[uint32]*capture.Recorder)
 
-	// Set up context with signal handling.
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// Session logon callback.
 	onLogon := func(info session.SessionInfo) {
 		slog.Info("starting recording for session",
 			"session_id", info.ID,
@@ -120,7 +159,6 @@ func main() {
 		mu.Unlock()
 	}
 
-	// Session logoff callback.
 	onLogoff := func(info session.SessionInfo) {
 		slog.Info("stopping recording for session",
 			"session_id", info.ID,
@@ -144,14 +182,13 @@ func main() {
 		}
 	}
 
-	// Create and run session detector.
 	pollInterval := time.Duration(cfg.PollInterval) * time.Second
 	detector := session.NewDetector(pollInterval, onLogon, onLogoff)
 
 	slog.Info("session detector running, waiting for RDP sessions...")
 	detector.Run(ctx)
 
-	// Context was cancelled (signal received). Stop all active recorders.
+	// Shutdown: stop all active recorders.
 	slog.Info("shutting down, stopping all active recorders...")
 
 	mu.Lock()
@@ -169,4 +206,5 @@ func main() {
 	}
 
 	slog.Info("p0rtal agent stopped")
+	return nil
 }
