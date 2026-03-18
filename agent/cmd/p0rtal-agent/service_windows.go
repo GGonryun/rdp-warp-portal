@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -75,6 +76,21 @@ func (s *agentService) Execute(args []string, r <-chan svc.ChangeRequest, change
 	}
 }
 
+// serviceLogPath returns the path to the service log file.
+// When installed, logs go to C:\p0rtal\p0rtal.log.
+func serviceLogPath() string {
+	// Check if the install directory exists (service is installed).
+	if _, err := os.Stat(installDir); err == nil {
+		return filepath.Join(installDir, "p0rtal.log")
+	}
+	// Fall back to next to the executable.
+	exePath, err := os.Executable()
+	if err != nil {
+		return "p0rtal.log"
+	}
+	return filepath.Join(filepath.Dir(exePath), "p0rtal.log")
+}
+
 // runAsService runs the agent as a Windows service.
 func runAsService() {
 	// Set up logging to Windows Event Log.
@@ -84,7 +100,17 @@ func runAsService() {
 		elog.Info(1, "p0rtal agent service starting")
 	}
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	// Write slog output to a log file next to the executable.
+	logPath := serviceLogPath()
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		// Fall back to stderr if we can't open the log file.
+		logFile = os.Stderr
+	} else {
+		defer logFile.Close()
+	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
 
@@ -96,16 +122,51 @@ func runAsService() {
 	}
 }
 
-// installService installs the agent as a Windows service.
+// installDir is the fixed installation directory for the service.
+const installDir = `C:\p0rtal`
+
+// installService copies the agent and config to C:\p0rtal and installs the Windows service.
 func installService(configPath string) error {
-	exePath, err := os.Executable()
+	srcExe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
 	}
-	// Resolve to absolute path.
-	exePath, err = filepath.Abs(exePath)
+	srcExe, err = filepath.Abs(srcExe)
 	if err != nil {
 		return fmt.Errorf("resolve absolute path: %w", err)
+	}
+	srcDir := filepath.Dir(srcExe)
+
+	// Create install directory.
+	if err := os.MkdirAll(installDir, 0o755); err != nil {
+		return fmt.Errorf("create install dir: %w", err)
+	}
+
+	// Copy agent executable.
+	dstExe := filepath.Join(installDir, "agent.exe")
+	if err := copyFile(srcExe, dstExe); err != nil {
+		return fmt.Errorf("copy agent.exe: %w", err)
+	}
+	fmt.Printf("Copied agent.exe to %s\n", dstExe)
+
+	// Copy config.json if it exists next to the source executable.
+	srcConfig := filepath.Join(srcDir, configPath)
+	if _, err := os.Stat(srcConfig); err == nil {
+		dstConfig := filepath.Join(installDir, "config.json")
+		if err := copyFile(srcConfig, dstConfig); err != nil {
+			return fmt.Errorf("copy config.json: %w", err)
+		}
+		fmt.Printf("Copied config.json to %s\n", dstConfig)
+	}
+
+	// Copy ffmpeg.exe if it exists next to the source executable.
+	srcFFmpeg := filepath.Join(srcDir, "ffmpeg.exe")
+	if _, err := os.Stat(srcFFmpeg); err == nil {
+		dstFFmpeg := filepath.Join(installDir, "ffmpeg.exe")
+		if err := copyFile(srcFFmpeg, dstFFmpeg); err != nil {
+			return fmt.Errorf("copy ffmpeg.exe: %w", err)
+		}
+		fmt.Printf("Copied ffmpeg.exe to %s\n", dstFFmpeg)
 	}
 
 	m, err := mgr.Connect()
@@ -121,7 +182,7 @@ func installService(configPath string) error {
 		return fmt.Errorf("service %q already exists", serviceName)
 	}
 
-	s, err = m.CreateService(serviceName, exePath, mgr.Config{
+	s, err = m.CreateService(serviceName, dstExe, mgr.Config{
 		DisplayName: "p0rtal Agent",
 		Description: "Records RDP sessions and uploads to the p0rtal broker.",
 		StartType:   mgr.StartAutomatic,
@@ -133,7 +194,6 @@ func installService(configPath string) error {
 
 	// Set up event log source.
 	if err := eventlog.InstallAsEventCreate(serviceName, eventlog.Error|eventlog.Warning|eventlog.Info); err != nil {
-		// Non-fatal — logging will still work via stderr.
 		fmt.Fprintf(os.Stderr, "warning: failed to install event log source: %v\n", err)
 	}
 
@@ -146,6 +206,26 @@ func installService(configPath string) error {
 	}
 
 	return nil
+}
+
+// copyFile copies a file from src to dst, overwriting dst if it exists.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
 }
 
 // uninstallService removes the Windows service.
@@ -182,6 +262,13 @@ func uninstallService() error {
 	}
 
 	_ = eventlog.Remove(serviceName)
+
+	// Remove install directory.
+	if err := os.RemoveAll(installDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to remove install dir %s: %v\n", installDir, err)
+	} else {
+		fmt.Printf("Removed %s\n", installDir)
+	}
 
 	fmt.Printf("Service %q uninstalled successfully.\n", serviceName)
 	return nil
@@ -311,27 +398,14 @@ func queryService() error {
 	return nil
 }
 
-// tailLogs streams the service logs in real time using PowerShell.
+// tailLogs streams the service log file in real time.
 func tailLogs() error {
-	fmt.Printf("Tailing logs for service %q (Ctrl+C to stop)...\n\n", serviceName)
+	logPath := serviceLogPath()
+	fmt.Printf("Tailing %s (Ctrl+C to stop)...\n\n", logPath)
 
-	script := fmt.Sprintf(`
-$svcName = '%s'
-$lastTime = (Get-Date).AddSeconds(-10)
-while ($true) {
-    $events = Get-WinEvent -FilterHashtable @{LogName='Application';ProviderName=$svcName;StartTime=$lastTime} -ErrorAction SilentlyContinue
-    if ($events) {
-        $events | Sort-Object TimeCreated | ForEach-Object {
-            $ts = $_.TimeCreated.ToString('HH:mm:ss')
-            Write-Host "[$ts] $($_.Message)"
-        }
-        $lastTime = ($events | Sort-Object TimeCreated | Select-Object -Last 1).TimeCreated.AddMilliseconds(1)
-    }
-    Start-Sleep 2
-}
-`, serviceName)
-
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", script)
+	// Use PowerShell's Get-Content -Wait which is equivalent to tail -f.
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command",
+		fmt.Sprintf("Get-Content -Path '%s' -Tail 50 -Wait", logPath))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

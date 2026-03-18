@@ -72,6 +72,7 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 		r.config.Framerate,
 		r.config.ChunkSecs,
 		r.outputDir,
+		sessionInfo.ID,
 		r.handleChunk,
 	)
 	if err := r.screen.Start(ctx); err != nil {
