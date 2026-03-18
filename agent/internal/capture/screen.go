@@ -20,22 +20,25 @@ type ScreenRecorder struct {
 	framerate  int
 	chunkSecs  int
 	outputDir  string
+	sessionID  uint32 // Windows session ID (0 = current session)
 	onChunk    func(chunkPath string)
 
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	cancel   context.CancelFunc
+	mu        sync.Mutex
+	cmd       *exec.Cmd
+	process   *os.Process // used when launching in another session
+	stdin     io.WriteCloser
+	cancel    context.CancelFunc
 	nextChunk int // next segment start number across restarts
 }
 
 // NewScreenRecorder creates a new screen recorder.
-func NewScreenRecorder(ffmpegPath string, framerate, chunkSecs int, outputDir string, onChunk func(string)) *ScreenRecorder {
+func NewScreenRecorder(ffmpegPath string, framerate, chunkSecs int, outputDir string, sessionID uint32, onChunk func(string)) *ScreenRecorder {
 	return &ScreenRecorder{
 		ffmpegPath: ffmpegPath,
 		framerate:  framerate,
 		chunkSecs:  chunkSecs,
 		outputDir:  outputDir,
+		sessionID:  sessionID,
 		onChunk:    onChunk,
 	}
 }
@@ -67,11 +70,10 @@ func (s *ScreenRecorder) Start(ctx context.Context) error {
 	return nil
 }
 
-// launchFFmpeg starts a new ffmpeg process with the current segment start number.
-func (s *ScreenRecorder) launchFFmpeg(ctx context.Context) error {
+// ffmpegArgs builds the ffmpeg command-line arguments.
+func (s *ScreenRecorder) ffmpegArgs() []string {
 	outputPattern := filepath.Join(s.outputDir, "chunk_%03d.ts")
-
-	s.cmd = exec.CommandContext(ctx, s.ffmpegPath,
+	return []string{
 		"-f", "gdigrab",
 		"-framerate", fmt.Sprintf("%d", s.framerate),
 		"-i", "desktop",
@@ -86,7 +88,29 @@ func (s *ScreenRecorder) launchFFmpeg(ctx context.Context) error {
 		"-segment_start_number", fmt.Sprintf("%d", s.nextChunk),
 		"-reset_timestamps", "1",
 		outputPattern,
-	)
+	}
+}
+
+// launchFFmpeg starts a new ffmpeg process with the current segment start number.
+// If sessionID > 0, it launches ffmpeg in the specified Windows session using
+// CreateProcessAsUser so it can access that session's desktop.
+func (s *ScreenRecorder) launchFFmpeg(ctx context.Context) error {
+	args := s.ffmpegArgs()
+
+	if s.sessionID > 0 {
+		// Launch in the target user's session.
+		proc, err := launchInSession(s.sessionID, s.ffmpegPath, args)
+		if err != nil {
+			return fmt.Errorf("launch ffmpeg in session %d: %w", s.sessionID, err)
+		}
+		s.process = proc
+		s.stdin = nil // stdin not available when using CreateProcessAsUser
+		slog.Info("ffmpeg started in user session", "pid", proc.Pid, "session_id", s.sessionID, "segment_start", s.nextChunk)
+		return nil
+	}
+
+	// Launch in current session (interactive mode).
+	s.cmd = exec.CommandContext(ctx, s.ffmpegPath, args...)
 
 	var err error
 	s.stdin, err = s.cmd.StdinPipe()
@@ -106,7 +130,6 @@ func (s *ScreenRecorder) launchFFmpeg(ctx context.Context) error {
 }
 
 // stopFFmpeg gracefully stops the current ffmpeg process.
-// Returns the number of chunks that exist after stopping.
 func (s *ScreenRecorder) stopFFmpeg() {
 	if s.stdin != nil {
 		if _, err := s.stdin.Write([]byte("q")); err != nil {
@@ -116,6 +139,7 @@ func (s *ScreenRecorder) stopFFmpeg() {
 		s.stdin = nil
 	}
 
+	// Stop process launched via exec.Command.
 	if s.cmd != nil && s.cmd.Process != nil {
 		done := make(chan error, 1)
 		go func() {
@@ -132,6 +156,14 @@ func (s *ScreenRecorder) stopFFmpeg() {
 			s.cmd.Process.Kill()
 		}
 		s.cmd = nil
+	}
+
+	// Stop process launched via CreateProcessAsUser.
+	if s.process != nil {
+		// No stdin pipe, so we kill directly.
+		s.process.Kill()
+		s.process.Wait()
+		s.process = nil
 	}
 
 	// Update nextChunk based on files on disk.
