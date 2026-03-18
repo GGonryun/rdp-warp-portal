@@ -502,6 +502,35 @@
       <h2>Recordings</h2>
       <button class="btn-sm btn-refresh" onclick="loadRecordings()">Refresh</button>
     </div>
+    <div style="margin-bottom:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:flex-end;">
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">Target</label>
+        <input id="filter-target" placeholder="e.g. mike-rdp" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:140px;" />
+      </div>
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">User</label>
+        <input id="filter-user" placeholder="e.g. rdpadmin" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:130px;" />
+      </div>
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">From</label>
+        <input id="filter-start" type="datetime-local" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:185px;" />
+      </div>
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">To</label>
+        <input id="filter-end" type="datetime-local" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:185px;" />
+      </div>
+      <div>
+        <label style="font-size:0.75rem;color:var(--muted);">Status</label>
+        <select id="filter-status" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:120px;">
+          <option value="">All</option>
+          <option value="recording">Recording</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+        </select>
+      </div>
+      <button class="btn-sm btn-primary" onclick="loadRecordings()" style="height:fit-content;padding:0.4rem 0.75rem;">Search</button>
+      <button class="btn-sm btn-refresh" onclick="clearRecordingFilters()" style="height:fit-content;padding:0.4rem 0.75rem;">Clear</button>
+    </div>
     <div id="recordings-container">
       <div class="empty-state">No recordings found.</div>
     </div>
@@ -871,9 +900,34 @@
     return m + 'm ' + s + 's';
   }
 
+  function buildRecordingQuery() {
+    const params = new URLSearchParams();
+    const target = document.getElementById('filter-target').value.trim();
+    const user = document.getElementById('filter-user').value.trim();
+    const start = document.getElementById('filter-start').value;
+    const end = document.getElementById('filter-end').value;
+    const status = document.getElementById('filter-status').value;
+    if (target) params.set('target', target);
+    if (user) params.set('user', user);
+    if (start) params.set('start', new Date(start).toISOString());
+    if (end) params.set('end', new Date(end).toISOString());
+    if (status) params.set('status', status);
+    const qs = params.toString();
+    return qs ? '?' + qs : '';
+  }
+
+  function clearRecordingFilters() {
+    document.getElementById('filter-target').value = '';
+    document.getElementById('filter-user').value = '';
+    document.getElementById('filter-start').value = '';
+    document.getElementById('filter-end').value = '';
+    document.getElementById('filter-status').value = '';
+    loadRecordings();
+  }
+
   async function loadRecordings() {
     try {
-      const resp = await apiFetch(API + '/api/recordings');
+      const resp = await apiFetch(API + '/api/recordings' + buildRecordingQuery());
       const container = document.getElementById('recordings-container');
       if (!resp.ok) {
         const err = await resp.text();

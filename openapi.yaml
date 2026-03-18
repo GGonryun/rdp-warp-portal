@@ -466,10 +466,43 @@ paths:
                 $ref: '#/components/schemas/Error'
     get:
       summary: List recordings
+      description: >-
+        Returns recordings filtered by the given query parameters.
+        All filters are optional. Time filters use RFC 3339 format.
+        Recordings must be fully contained within the start/end range.
       tags: [Recordings]
+      parameters:
+        - name: target
+          in: query
+          description: Filter by target name or agent hostname (case-insensitive)
+          schema:
+            type: string
+        - name: user
+          in: query
+          description: Filter by Windows username (case-insensitive)
+          schema:
+            type: string
+        - name: start
+          in: query
+          description: Only recordings that started at or after this time (RFC 3339)
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          description: Only recordings that ended at or before this time (RFC 3339)
+          schema:
+            type: string
+            format: date-time
+        - name: status
+          in: query
+          description: Filter by recording status
+          schema:
+            type: string
+            enum: [recording, completed, failed]
       responses:
         '200':
-          description: List of recordings
+          description: List of recordings matching the filters
           content:
             application/json:
               schema:
