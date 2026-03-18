@@ -212,12 +212,19 @@ func (s *Store) Finalize(id string) error {
 	concatFile.Close()
 
 	// Run ffmpeg to concatenate chunks.
+	// Re-encode with scale filter to handle resolution changes between chunks.
+	// The pad filter ensures even dimensions required by libx264.
 	cmd := exec.Command(
 		"ffmpeg",
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatPath,
-		"-c", "copy",
+		"-vf", "scale=1920:-2:force_original_aspect_ratio=decrease,pad=1920:ih:0:0:black",
+		"-c:v", "libx264",
+		"-preset", "fast",
+		"-crf", "23",
+		"-pix_fmt", "yuv420p",
+		"-movflags", "+faststart",
 		videoPath,
 	)
 	if output, err := cmd.CombinedOutput(); err != nil {
