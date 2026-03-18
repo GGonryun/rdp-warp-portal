@@ -88,7 +88,7 @@ components:
           example: rdpadmin
         password:
           type: string
-          example: Password123abc
+          example: password
 
     Target:
       type: object
@@ -105,7 +105,7 @@ components:
         users:
           type: array
           items:
-            $ref: '#/components/schemas/TargetUser'
+            $ref: "#/components/schemas/TargetUser"
 
     CreateSessionRequest:
       type: object
@@ -237,7 +237,14 @@ components:
           format: date-time
         type:
           type: string
-          enum: [process_start, process_end, window_focus, session_start, session_end]
+          enum:
+            [
+              process_start,
+              process_end,
+              window_focus,
+              session_start,
+              session_end,
+            ]
         data:
           type: object
           additionalProperties: true
@@ -249,12 +256,12 @@ paths:
       security: []
       tags: [Health]
       responses:
-        '200':
+        "200":
           description: Service is healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
 
   /healthz:
     get:
@@ -262,12 +269,12 @@ paths:
       security: []
       tags: [Health]
       responses:
-        '200':
+        "200":
           description: Service is healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
 
   /ready:
     get:
@@ -275,18 +282,18 @@ paths:
       security: []
       tags: [Health]
       responses:
-        '200':
+        "200":
           description: Service is ready
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
-        '503':
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
           description: Service is not ready (no available ports)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: "#/components/schemas/HealthResponse"
 
   /api/targets:
     get:
@@ -294,27 +301,27 @@ paths:
       description: Returns all targets with their available user accounts and credentials.
       tags: [Targets]
       responses:
-        '200':
+        "200":
           description: List of targets with users
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Target'
+                  $ref: "#/components/schemas/Target"
               example:
                 - id: mike-rdp
                   hostname: mike-rdp
                   ip: 10.1.0.7
                   users:
                     - username: rdpadmin
-                      password: Password123abc
-        '500':
+                      password: password
+        "500":
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/sessions:
     post:
@@ -326,32 +333,32 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateSessionRequest'
+              $ref: "#/components/schemas/CreateSessionRequest"
       responses:
-        '201':
+        "201":
           description: Session created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateSessionResponse'
-        '400':
+                $ref: "#/components/schemas/CreateSessionResponse"
+        "400":
           description: Bad request (missing target_id or username)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '404':
+                $ref: "#/components/schemas/Error"
+        "404":
           description: Target or username not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '503':
+                $ref: "#/components/schemas/Error"
+        "503":
           description: Session limit reached or credential provider unavailable
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     get:
       summary: List sessions
       description: Returns sessions for the specified user. Defaults to "anonymous" if no user_id provided.
@@ -363,14 +370,14 @@ paths:
             type: string
           description: Filter sessions by user ID
       responses:
-        '200':
+        "200":
           description: List of sessions
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Session'
+                  $ref: "#/components/schemas/Session"
 
   /api/sessions/{id}:
     get:
@@ -383,18 +390,18 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Session details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Session'
-        '404':
+                $ref: "#/components/schemas/Session"
+        "404":
           description: Session not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     delete:
       summary: Terminate session
       tags: [Sessions]
@@ -405,14 +412,14 @@ paths:
           schema:
             type: string
       responses:
-        '204':
+        "204":
           description: Session terminated
-        '404':
+        "404":
           description: Session not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/sessions/{id}/rdp:
     get:
@@ -426,19 +433,19 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: RDP file
           content:
             application/x-rdp:
               schema:
                 type: string
                 format: binary
-        '404':
+        "404":
           description: Session not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/recordings:
     post:
@@ -450,20 +457,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateRecordingRequest'
+              $ref: "#/components/schemas/CreateRecordingRequest"
       responses:
-        '201':
+        "201":
           description: Recording created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Recording'
-        '400':
+                $ref: "#/components/schemas/Recording"
+        "400":
           description: Bad request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     get:
       summary: List recordings
       description: >-
@@ -501,14 +508,14 @@ paths:
             type: string
             enum: [recording, completed, failed]
       responses:
-        '200':
+        "200":
           description: List of recordings matching the filters
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Recording'
+                  $ref: "#/components/schemas/Recording"
 
   /api/recordings/{id}:
     get:
@@ -521,18 +528,18 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Recording metadata
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Recording'
-        '404':
+                $ref: "#/components/schemas/Recording"
+        "404":
           description: Recording not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     delete:
       summary: Delete recording
       description: Permanently removes the recording and all associated data.
@@ -544,14 +551,14 @@ paths:
           schema:
             type: string
       responses:
-        '204':
+        "204":
           description: Recording deleted
-        '404':
+        "404":
           description: Recording not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/chunks:
     post:
@@ -575,7 +582,7 @@ paths:
                   type: string
                   format: binary
       responses:
-        '200':
+        "200":
           description: Chunk uploaded
           content:
             application/json:
@@ -584,12 +591,12 @@ paths:
                 properties:
                   chunk_index:
                     type: integer
-        '404':
+        "404":
           description: Recording not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/events:
     post:
@@ -609,9 +616,9 @@ paths:
             schema:
               type: array
               items:
-                $ref: '#/components/schemas/RecordingEvent'
+                $ref: "#/components/schemas/RecordingEvent"
       responses:
-        '200':
+        "200":
           description: Events received
           content:
             application/json:
@@ -620,12 +627,12 @@ paths:
                 properties:
                   received:
                     type: integer
-        '404':
+        "404":
           description: Recording not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
     get:
       summary: Get recording events
       tags: [Recordings]
@@ -636,20 +643,20 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: List of events
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/RecordingEvent'
-        '404':
+                  $ref: "#/components/schemas/RecordingEvent"
+        "404":
           description: Recording not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/end:
     put:
@@ -663,18 +670,18 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Recording finalized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Recording'
-        '404':
+                $ref: "#/components/schemas/Recording"
+        "404":
           description: Recording not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/video:
     get:
@@ -688,19 +695,19 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Video file
           content:
             video/mp4:
               schema:
                 type: string
                 format: binary
-        '404':
+        "404":
           description: Recording or video not found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/access:
     get:
@@ -708,14 +715,14 @@ paths:
       description: Returns all current ACL entries.
       tags: [Access Control]
       responses:
-        '200':
+        "200":
           description: List of access grants
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ACLEntry'
+                  $ref: "#/components/schemas/ACLEntry"
 
   /api/grant:
     post:
@@ -729,30 +736,30 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AccessRequest'
+              $ref: "#/components/schemas/AccessRequest"
             example:
               email: "user@example.com"
               target_id: "dc-01"
               username: "rdpadmin"
       responses:
-        '200':
+        "200":
           description: Access granted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AccessStatusResponse'
-        '400':
+                $ref: "#/components/schemas/AccessStatusResponse"
+        "400":
           description: Invalid request (missing email, target_id, or username)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '409':
+                $ref: "#/components/schemas/Error"
+        "409":
           description: Access already exists
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
 
   /api/revoke:
     post:
@@ -766,27 +773,27 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AccessRequest'
+              $ref: "#/components/schemas/AccessRequest"
             example:
               email: "user@example.com"
               target_id: "dc-01"
               username: "rdpadmin"
       responses:
-        '200':
+        "200":
           description: Access revoked and active sessions terminated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AccessStatusResponse'
-        '400':
+                $ref: "#/components/schemas/AccessStatusResponse"
+        "400":
           description: Invalid request (missing email, target_id, or username)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
-        '404':
+                $ref: "#/components/schemas/Error"
+        "404":
           description: Access does not exist
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"

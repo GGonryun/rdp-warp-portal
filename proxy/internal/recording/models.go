@@ -25,9 +25,10 @@ type Recording struct {
 	StartedAt     time.Time       `json:"started_at"`
 	EndedAt       *time.Time      `json:"ended_at,omitempty"`
 	DurationSecs  float64         `json:"duration_secs"`
-	ChunkCount    int             `json:"chunk_count"`
-	TotalBytes    int64           `json:"total_bytes"`
-	EventCount    int             `json:"event_count"`
+	ChunkCount     int             `json:"chunk_count"`
+	ChunkDurations []float64      `json:"chunk_durations,omitempty"`
+	TotalBytes     int64           `json:"total_bytes"`
+	EventCount     int             `json:"event_count"`
 }
 
 // RecordingEvent represents a discrete event that occurred during a recording.

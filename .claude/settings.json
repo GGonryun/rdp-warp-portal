@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(make clean:*)",
-      "Bash(/opt/homebrew/bin/go get:*)"
+      "Bash(/opt/homebrew/bin/go get:*)",
+      "Bash(export PATH=$PATH:/usr/local/go/bin:/opt/homebrew/bin)"
     ]
   }
 }
