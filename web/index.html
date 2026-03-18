@@ -420,9 +420,15 @@
 <header>
   <h1><span>p0rtal</span> — RDP Proxy Tester</h1>
   <div style="display:flex;align-items:center;gap:1rem;">
-    <input type="password" id="api-key" placeholder="API Key" value=""
-      style="width:200px;padding:0.35rem 0.6rem;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);"
-      oninput="saveApiKey()" />
+    <div style="position:relative;display:flex;align-items:center;">
+      <input type="password" id="api-key" placeholder="API Key" value=""
+        style="width:200px;padding:0.35rem 2rem 0.35rem 0.6rem;font-size:0.8rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);"
+        oninput="saveApiKey()" />
+      <button onclick="toggleApiKeyVisibility()" title="Toggle visibility"
+        style="position:absolute;right:0.4rem;background:none;border:none;cursor:pointer;color:var(--muted);padding:0;line-height:1;font-size:1rem;">
+        <span id="api-key-eye">👁</span>
+      </button>
+    </div>
     <div class="health-badge">
       <div class="health-dot" id="health-dot"></div>
       <span id="health-text">Checking...</span>
@@ -584,6 +590,11 @@
 
   function getApiKey() {
     return document.getElementById('api-key').value.trim();
+  }
+
+  function toggleApiKeyVisibility() {
+    const input = document.getElementById('api-key');
+    input.type = input.type === 'password' ? 'text' : 'password';
   }
 
   function saveApiKey() {
@@ -963,6 +974,7 @@
           <td>${relativeTime(r.started_at)}</td>
           <td class="actions">
             <button class="btn-sm btn-play" onclick="openPlayback('${r.id}', '${r.started_at || ''}')">Play</button>
+            <button class="btn-sm btn-danger" onclick="deleteRecording('${r.id}')">Delete</button>
           </td>
         </tr>`;
       });
@@ -971,6 +983,21 @@
       container.innerHTML = html;
     } catch (e) {
       console.error('Failed to load recordings', e);
+    }
+  }
+
+  async function deleteRecording(id) {
+    if (!confirm('Delete this recording? This cannot be undone.')) return;
+    try {
+      const resp = await apiFetch(API + '/api/recordings/' + id, { method: 'DELETE' });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        alert('Failed to delete recording: ' + (err.error || resp.statusText));
+        return;
+      }
+      loadRecordings();
+    } catch (e) {
+      console.error('Failed to delete recording', e);
     }
   }
 

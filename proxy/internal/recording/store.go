@@ -278,6 +278,23 @@ func (s *Store) GetEvents(id string) ([]RecordingEvent, error) {
 	return events, nil
 }
 
+// Delete removes the recording directory and all its contents.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dir := s.recordingDir(id)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return ErrRecordingNotFound
+	}
+
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove recording directory: %w", err)
+	}
+
+	return nil
+}
+
 // VideoPath returns the absolute path to the final concatenated video.
 func (s *Store) VideoPath(id string) string {
 	return filepath.Join(s.recordingDir(id), "video.mp4")
