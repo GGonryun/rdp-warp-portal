@@ -43,8 +43,8 @@ func NewScreenRecorder(ffmpegPath string, framerate, chunkSecs int, outputDir st
 // fixedVF is the video filter that scales to 854x480 with black bar padding.
 // This keeps the output resolution constant regardless of input resolution,
 // which is required for seamless HLS segment stitching.
-const fixedVF = "scale=854:480:force_original_aspect_ratio=decrease," +
-	"pad=854:480:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
+const fixedVF = "scale=1280:720:force_original_aspect_ratio=decrease," +
+	"pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,setsar=1"
 
 // Start launches the ffmpeg process and begins watching for chunks.
 func (s *ScreenRecorder) Start(ctx context.Context) error {
