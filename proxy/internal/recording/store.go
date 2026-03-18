@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -141,12 +144,33 @@ func (s *Store) AppendChunk(id string, data io.Reader) (int, error) {
 
 	rec.ChunkCount++
 	rec.TotalBytes += n
+	rec.ChunkDurations = append(rec.ChunkDurations, probeChunkDuration(chunkPath))
 
 	if err := s.writeMetadata(rec); err != nil {
 		return 0, fmt.Errorf("update metadata: %w", err)
 	}
 
 	return chunkNum, nil
+}
+
+// probeChunkDuration uses ffprobe to get the actual duration of a .ts chunk file.
+// Returns 0 on error (callers should fall back to the configured chunk duration).
+func probeChunkDuration(path string) float64 {
+	out, err := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	).Output()
+	if err != nil {
+		return 0
+	}
+	dur, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil {
+		return 0
+	}
+	return dur
 }
 
 // AppendEvents appends events to the events.jsonl file and updates the event
@@ -320,15 +344,30 @@ func (s *Store) GeneratePlaylist(id string, chunkSecs int) ([]byte, error) {
 	if chunkSecs <= 0 {
 		chunkSecs = 30
 	}
+	defaultDur := float64(chunkSecs)
+
+	// Resolve per-segment durations and compute max for EXT-X-TARGETDURATION.
+	maxDur := defaultDur
+	durations := make([]float64, rec.ChunkCount)
+	for i := 0; i < rec.ChunkCount; i++ {
+		dur := defaultDur
+		if i < len(rec.ChunkDurations) && rec.ChunkDurations[i] > 0 {
+			dur = rec.ChunkDurations[i]
+		}
+		durations[i] = dur
+		if dur > maxDur {
+			maxDur = dur
+		}
+	}
 
 	var b []byte
 	b = append(b, "#EXTM3U\n"...)
-	b = append(b, fmt.Sprintf("#EXT-X-VERSION:3\n")...)
-	b = append(b, fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", chunkSecs)...)
+	b = append(b, "#EXT-X-VERSION:3\n"...)
+	b = append(b, fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", int(math.Ceil(maxDur)))...)
 	b = append(b, "#EXT-X-MEDIA-SEQUENCE:0\n"...)
 
 	for i := 0; i < rec.ChunkCount; i++ {
-		b = append(b, fmt.Sprintf("#EXTINF:%d.000,\n", chunkSecs)...)
+		b = append(b, fmt.Sprintf("#EXTINF:%.3f,\n", durations[i])...)
 		b = append(b, fmt.Sprintf("segments/%03d.ts\n", i)...)
 	}
 
