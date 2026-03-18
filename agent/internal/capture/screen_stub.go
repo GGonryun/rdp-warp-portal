@@ -7,3 +7,8 @@ package capture
 func getScreenResolution() (int, int) {
 	return 0, 0
 }
+
+// getSessionResolution is a no-op on non-Windows platforms.
+func getSessionResolution(sessionID uint32) (int, int) {
+	return 0, 0
+}

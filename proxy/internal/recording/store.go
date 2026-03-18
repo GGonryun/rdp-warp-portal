@@ -218,6 +218,15 @@ func (s *Store) Finalize(id string) error {
 		return err
 	}
 
+	// If no chunks were uploaded, just mark as completed without concatenating.
+	if rec.ChunkCount == 0 {
+		now := time.Now()
+		rec.Status = StatusCompleted
+		rec.EndedAt = &now
+		rec.DurationSecs = now.Sub(rec.StartedAt).Seconds()
+		return s.writeMetadata(rec)
+	}
+
 	dir := s.recordingDir(id)
 	chunksDir := filepath.Join(dir, "chunks")
 	videoPath := filepath.Join(dir, "video.mp4")
@@ -367,6 +376,11 @@ func (s *Store) GeneratePlaylist(id string, chunkSecs int) ([]byte, error) {
 	b = append(b, "#EXT-X-MEDIA-SEQUENCE:0\n"...)
 
 	for i := 0; i < rec.ChunkCount; i++ {
+		// Insert a discontinuity marker after a short chunk (ffmpeg restart boundary).
+		// A chunk shorter than half the target duration indicates ffmpeg was restarted.
+		if i > 0 && durations[i-1] > 0 && durations[i-1] < defaultDur*0.5 {
+			b = append(b, "#EXT-X-DISCONTINUITY\n"...)
+		}
 		b = append(b, fmt.Sprintf("#EXTINF:%.3f,\n", durations[i])...)
 		b = append(b, fmt.Sprintf("segments/%03d.ts\n", i)...)
 	}

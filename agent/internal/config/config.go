@@ -13,7 +13,8 @@ type Config struct {
 	FfmpegPath   string `json:"ffmpeg_path"`   // path to ffmpeg binary, default "ffmpeg"
 	Framerate    int    `json:"framerate"`     // capture framerate, default 5
 	ChunkSecs    int    `json:"chunk_secs"`    // segment duration seconds, default 30
-	PollInterval int    `json:"poll_interval"` // session poll interval seconds, default 5
+	PollInterval    int `json:"poll_interval"`     // session poll interval seconds, default 5
+	ResizePollMs    int `json:"resize_poll_ms"`    // resolution poll interval milliseconds, default 1000
 }
 
 func applyDefaults(cfg *Config) {
@@ -28,6 +29,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 5
+	}
+	if cfg.ResizePollMs <= 0 {
+		cfg.ResizePollMs = 1000
 	}
 }
 
@@ -68,6 +72,11 @@ func LoadFromEnv() *Config {
 	if v := os.Getenv("POLL_INTERVAL"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.PollInterval = n
+		}
+	}
+	if v := os.Getenv("RESIZE_POLL_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.ResizePollMs = n
 		}
 	}
 

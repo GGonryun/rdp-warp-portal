@@ -20,7 +20,8 @@ Create `config.json` next to `agent.exe`:
   "ffmpeg_path": "C:\\ffmpeg\\bin\\ffmpeg.exe",
   "framerate": 10,
   "chunk_secs": 4,
-  "poll_interval": 5
+  "poll_interval": 5,
+  "resize_poll_ms": 1000
 }
 ```
 
@@ -31,6 +32,7 @@ Create `config.json` next to `agent.exe`:
 | `ffmpeg_path` | Path to ffmpeg binary | Auto-detected or downloaded |
 | `framerate` | Screen capture framerate | `5` |
 | `chunk_secs` | Video segment duration in seconds | `30` |
+| `resize_poll_ms` | Resolution poll interval in milliseconds | `1000` |
 | `poll_interval` | Session polling interval in seconds | `5` |
 
 ## Commands

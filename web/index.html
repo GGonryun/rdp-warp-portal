@@ -905,6 +905,15 @@
     return m + 'm ' + s + 's';
   }
 
+  function formatBytes(bytes) {
+    if (bytes == null || bytes === 0) return '—';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    let val = bytes;
+    while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+    return val.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+  }
+
   function buildRecordingQuery() {
     const params = new URLSearchParams();
     const target = document.getElementById('filter-target').value.trim();
@@ -954,6 +963,7 @@
           <th>User</th>
           <th>Status</th>
           <th>Duration</th>
+          <th>Size</th>
           <th>Started</th>
           <th>Actions</th>
         </tr></thead><tbody>`;
@@ -965,6 +975,7 @@
           <td>${r.windows_user || '—'}</td>
           <td><span class="state ${recordingStateClass(r.status)}">${r.status}</span></td>
           <td>${formatDuration(r.duration_secs)}</td>
+          <td>${formatBytes(r.total_bytes)}</td>
           <td>${relativeTime(r.started_at)}</td>
           <td class="actions">
             <button class="btn-sm btn-play" onclick="openPlayback('${r.id}', '${r.started_at || ''}')">Play</button>
@@ -1113,6 +1124,8 @@
         manifestLoadingTimeOut: 10000,
         manifestLoadingMaxRetry: 6,
         levelLoadingTimeOut: 10000,
+        fragLoadingMaxRetry: 6,
+        enableWorker: true,
         xhrSetup: function(xhr) {
           const key = getApiKey();
           if (key) xhr.setRequestHeader('Authorization', 'Bearer ' + key);
@@ -1122,6 +1135,25 @@
       hlsInstance.attachMedia(video);
       hlsInstance.on(Hls.Events.MANIFEST_PARSED, function() {
         video.play().catch(() => {});
+      });
+      // Recover from errors caused by codec discontinuities (ffmpeg restarts).
+      hlsInstance.on(Hls.Events.ERROR, function(event, data) {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              console.warn('HLS media error, attempting recovery');
+              hlsInstance.recoverMediaError();
+              break;
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              console.warn('HLS network error, retrying');
+              hlsInstance.startLoad();
+              break;
+            default:
+              console.error('HLS fatal error', data);
+              hlsInstance.destroy();
+              break;
+          }
+        }
       });
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Native HLS support (Safari)
