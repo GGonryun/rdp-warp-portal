@@ -40,7 +40,15 @@ type RDPFileParams struct {
 //   - Use standard RDP security negotiation
 func GenerateRDPFile(params RDPFileParams) []byte {
 	// Build the compound username: username#target_id#token
-	compoundUsername := fmt.Sprintf("%s#%s#%s", params.UserID, params.TargetID, params.Token)
+	// Replace '@' in UserID to prevent RDP clients from interpreting it as a UPN
+	// (user@domain), which splits the username and strips the token.
+	safeUserID := strings.ReplaceAll(params.UserID, "@", "%40")
+	compoundUsername := fmt.Sprintf("%s#%s#%s", safeUserID, params.TargetID, params.Token)
+
+	// Build loadbalanceinfo — mstsc sends this verbatim as bytes in the X.224
+	// Connection Request. The username:s: field alone is NOT sent as a cookie.
+	// mstsc treats the :s: value as raw bytes to embed in the routing token.
+	lbInfo := "Cookie: mstshash=" + compoundUsername + "\r\n"
 
 	// Build the RDP file content
 	lines := []string{
@@ -48,6 +56,7 @@ func GenerateRDPFile(params RDPFileParams) []byte {
 		fmt.Sprintf("full address:s:%s:%d", params.BrokerHost, params.Port),
 		fmt.Sprintf("username:s:%s", compoundUsername),
 		fmt.Sprintf("domain:s:%s", params.Domain),
+		fmt.Sprintf("loadbalanceinfo:s:%s", lbInfo),
 
 		// Disable credential prompts - we don't want users entering passwords
 		"prompt for credentials:i:0",

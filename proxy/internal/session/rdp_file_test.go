@@ -330,7 +330,7 @@ func TestGenerateRDPFile_SpecialCharactersInUserID(t *testing.T) {
 	content := GenerateRDPFile(params)
 	contentStr := string(content)
 
-	expectedUsername := "username:s:user.name@domain.com#target-01#Ab12-_Cd34"
+	expectedUsername := "username:s:user.name%40domain.com#target-01#Ab12-_Cd34"
 	if !strings.Contains(contentStr, expectedUsername) {
 		t.Errorf("expected username %q in content", expectedUsername)
 	}
