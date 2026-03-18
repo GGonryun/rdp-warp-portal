@@ -297,7 +297,7 @@ func (r *Recorder) handleClipboardEvent(ce ClipboardEvent) {
 // isAgentWinLogEvent returns true if the Windows Event Log entry is about the agent itself.
 func isAgentWinLogEvent(message string) bool {
 	lower := strings.ToLower(message)
-	if strings.Contains(lower, "agent.exe") || strings.Contains(lower, "p0rtal-agent") || strings.Contains(lower, "p0rtal") {
+	if strings.Contains(lower, "agent.exe") || strings.Contains(lower, "p0rtal-agent") || strings.Contains(lower, "p0rtal") || strings.Contains(lower, "rdp-warp-portal") {
 		return true
 	}
 	if strings.Contains(lower, "ffmpeg.exe") || strings.Contains(lower, "ffmpeg") {

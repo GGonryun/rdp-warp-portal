@@ -56,13 +56,19 @@ while ($true) {
         # Security events
         $secEvents = Get-WinEvent -FilterHashtable @{LogName='Security';ID=$eventIds;StartTime=$lastCheck} -ErrorAction SilentlyContinue
         foreach ($e in $secEvents) {
+            # For 4688/4689 events, extract the process name from Properties
+            $procName = ''
+            if ($e.Id -eq 4688 -and $e.Properties.Count -ge 6) { $procName = $e.Properties[5].Value }
+            if ($e.Id -eq 4689 -and $e.Properties.Count -ge 6) { $procName = $e.Properties[5].Value }
+            $msg = $e.Message.Split([Environment]::NewLine)[0]
+            if ($procName) { $msg = "[$procName] $msg" }
             @{
                 ts = $e.TimeCreated.ToString('o')
                 type = 'winlog'
                 event_id = $e.Id
                 log = 'Security'
                 source = $e.ProviderName
-                message = $e.Message.Split([Environment]::NewLine)[0]
+                message = $msg
                 user = if ($e.Properties.Count -ge 6) { $e.Properties[5].Value } else { '' }
                 level = $e.LevelDisplayName
             } | ConvertTo-Json -Compress
