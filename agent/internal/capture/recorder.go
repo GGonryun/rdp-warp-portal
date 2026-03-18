@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -191,8 +192,31 @@ func (r *Recorder) handleChunk(chunkPath string) {
 	slog.Info("chunk uploaded", "path", chunkPath)
 }
 
+// isAgentProcess returns true if the process is part of the agent itself and should be filtered.
+func isAgentProcess(name, commandLine string) bool {
+	lower := strings.ToLower(name)
+	switch lower {
+	case "ffmpeg.exe", "ffmpeg", "powershell.exe", "agent.exe", "p0rtal-agent.exe":
+		return true
+	}
+	// Also filter by command line containing our paths.
+	cmdLower := strings.ToLower(commandLine)
+	if strings.Contains(cmdLower, "p0rtal") && (strings.Contains(cmdLower, "ffmpeg") || strings.Contains(cmdLower, "agent")) {
+		return true
+	}
+	// Filter the WMI subscription powershell scripts.
+	if lower == "powershell.exe" || strings.Contains(cmdLower, "register-wmievent") || strings.Contains(cmdLower, "get-winevent") {
+		return true
+	}
+	return false
+}
+
 // handleProcessEvent converts a ProcessEvent to a RecordingEvent and buffers it.
 func (r *Recorder) handleProcessEvent(pe ProcessEvent) {
+	if isAgentProcess(pe.Name, pe.CommandLine) {
+		return
+	}
+
 	data := map[string]any{
 		"pid":          pe.PID,
 		"name":         pe.Name,
