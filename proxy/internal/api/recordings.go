@@ -30,6 +30,8 @@ func (h *RecordingsHandler) RegisterRoutes(router *Router) {
 	router.HandleFunc("POST /api/recordings/{id}/events", h.sendEvents, false)
 	router.HandleFunc("PUT /api/recordings/{id}/end", h.endRecording, false)
 
+	router.HandleFunc("DELETE /api/recordings/{id}", h.deleteRecording, false)
+
 	router.HandleFunc("GET /api/recordings", h.listRecordings, false)
 	router.HandleFunc("GET /api/recordings/{id}", h.getRecording, false)
 	router.HandleFunc("GET /api/recordings/{id}/video", h.streamVideo, false)
@@ -132,6 +134,21 @@ id := r.PathValue("id")
 	}
 
 	writeJSON(w, http.StatusOK, rec)
+}
+
+func (h *RecordingsHandler) deleteRecording(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	if err := h.store.Delete(id); err != nil {
+		if errors.Is(err, recording.ErrRecordingNotFound) {
+			writeError(w, http.StatusNotFound, "recording not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Request) {
