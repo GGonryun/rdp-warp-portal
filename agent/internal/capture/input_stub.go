@@ -8,11 +8,10 @@ import (
 	"time"
 )
 
-// InputEvent represents a keyboard or mouse input event.
+// InputEvent represents a mouse input event.
 type InputEvent struct {
 	Timestamp time.Time
 	Type      string
-	Key       string
 	Button    string
 	X         int32
 	Y         int32
@@ -20,7 +19,7 @@ type InputEvent struct {
 	PID       uint32
 }
 
-// InputTracker captures keyboard and mouse events.
+// InputTracker captures mouse click events.
 type InputTracker struct {
 	onEvent func(InputEvent)
 }

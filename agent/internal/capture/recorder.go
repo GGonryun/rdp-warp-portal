@@ -23,6 +23,7 @@ type Recorder struct {
 	windows     *WindowTracker
 	input       *InputTracker
 	clipboard   *ClipboardTracker
+	winlog      *WinLogCapture
 	eventBuffer []client.RecordingEvent
 	mu          sync.Mutex
 	cancel      context.CancelFunc
@@ -95,6 +96,12 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 	r.clipboard = NewClipboardTracker(1*time.Second, r.handleClipboardEvent)
 	go r.clipboard.Run(ctx)
 
+	// Start Windows Event Log capture.
+	r.winlog = NewWinLogCapture(r.handleWinLogEvent)
+	if err := r.winlog.Start(ctx); err != nil {
+		slog.Warn("failed to start windows event log capture", "error", err)
+	}
+
 	// Start event flush goroutine.
 	go r.flushLoop(ctx)
 
@@ -117,6 +124,13 @@ func (r *Recorder) Stop() error {
 	if r.events != nil {
 		if err := r.events.Stop(); err != nil {
 			slog.Warn("error stopping event capture", "error", err)
+		}
+	}
+
+	// Stop Windows Event Log capture.
+	if r.winlog != nil {
+		if err := r.winlog.Stop(); err != nil {
+			slog.Warn("error stopping winlog capture", "error", err)
 		}
 	}
 
@@ -220,23 +234,16 @@ func (r *Recorder) handleWindowEvent(we WindowEvent) {
 
 // handleInputEvent converts an InputEvent to a RecordingEvent and buffers it.
 func (r *Recorder) handleInputEvent(ie InputEvent) {
-	data := map[string]any{
-		"window": ie.Window,
-		"pid":    ie.PID,
-	}
-
-	if ie.Type == "key_press" {
-		data["key"] = ie.Key
-	} else {
-		data["button"] = ie.Button
-		data["x"] = ie.X
-		data["y"] = ie.Y
-	}
-
 	evt := client.RecordingEvent{
 		Timestamp: ie.Timestamp,
 		Type:      ie.Type,
-		Data:      data,
+		Data: map[string]any{
+			"button": ie.Button,
+			"x":      ie.X,
+			"y":      ie.Y,
+			"window": ie.Window,
+			"pid":    ie.PID,
+		},
 	}
 
 	r.mu.Lock()
@@ -254,6 +261,33 @@ func (r *Recorder) handleClipboardEvent(ce ClipboardEvent) {
 			"window":  ce.Window,
 			"pid":     ce.PID,
 		},
+	}
+
+	r.mu.Lock()
+	r.eventBuffer = append(r.eventBuffer, evt)
+	r.mu.Unlock()
+}
+
+// handleWinLogEvent converts a WinLogEvent to a RecordingEvent and buffers it.
+func (r *Recorder) handleWinLogEvent(we WinLogEvent) {
+	data := map[string]any{
+		"event_id": we.EventID,
+		"log":      we.Log,
+		"source":   we.Source,
+		"message":  we.Message,
+		"level":    we.Level,
+	}
+	if we.User != "" {
+		data["user"] = we.User
+	}
+	if we.ScriptBlock != "" {
+		data["script_block"] = we.ScriptBlock
+	}
+
+	evt := client.RecordingEvent{
+		Timestamp: we.Timestamp,
+		Type:      "winlog",
+		Data:      data,
 	}
 
 	r.mu.Lock()

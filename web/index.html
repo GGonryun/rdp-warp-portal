@@ -389,6 +389,17 @@
     .event-type-process_start { background: rgba(34, 197, 94, 0.15); color: var(--green); }
     .event-type-process_end { background: rgba(239, 68, 68, 0.15); color: var(--red); }
     .event-type-window_focus { background: rgba(99, 102, 241, 0.15); color: var(--accent); }
+    .event-type-mouse_click { background: rgba(234, 179, 8, 0.15); color: #eab308; }
+    .event-type-clipboard { background: rgba(168, 85, 247, 0.15); color: #a855f7; }
+    .event-type-winlog { background: rgba(249, 115, 22, 0.15); color: var(--orange); }
+
+    .event-ts {
+      font-size: 0.65rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      color: var(--muted);
+      margin-top: 0.2rem;
+      opacity: 0.7;
+    }
 
     .event-detail {
       font-size: 0.78rem;
@@ -1082,12 +1093,13 @@
       const events = await resp.json();
       playbackEvents = (events || []).map(e => {
         let offsetSec = 0;
-        if (e.timestamp && playbackStartTime) {
-          offsetSec = Math.max(0, (new Date(e.timestamp).getTime() - playbackStartTime) / 1000);
+        const ts = e.ts || e.timestamp;
+        if (ts && playbackStartTime) {
+          offsetSec = Math.max(0, (new Date(ts).getTime() - playbackStartTime) / 1000);
         } else if (e.offset != null) {
           offsetSec = e.offset;
         }
-        return { ...e, offsetSec };
+        return { ...e, offsetSec, _ts: ts };
       }).sort((a, b) => a.offsetSec - b.offsetSec);
 
       renderEvents();
@@ -1109,18 +1121,46 @@
     if (type === 'process_start') return 'event-type-process_start';
     if (type === 'process_end') return 'event-type-process_end';
     if (type === 'window_focus') return 'event-type-window_focus';
+    if (type === 'mouse_click') return 'event-type-mouse_click';
+    if (type === 'clipboard') return 'event-type-clipboard';
+    if (type === 'winlog') return 'event-type-winlog';
     return '';
   }
 
   function eventDetails(event) {
-    const data = event.data || event;
-    const parts = [];
-    if (data.process_name) parts.push(data.process_name);
-    if (data.command_line) parts.push(data.command_line);
-    if (data.window_title) parts.push(data.window_title);
-    if (data.name) parts.push(data.name);
-    if (parts.length === 0 && data.details) parts.push(data.details);
-    return parts.join(' — ') || '—';
+    const d = event.data || {};
+    const type = (event.type || '').toLowerCase();
+
+    if (type === 'process_start') {
+      const parts = [d.name || ''];
+      if (d.command_line) parts.push(d.command_line);
+      if (d.pid) parts[0] += ' (PID ' + d.pid + ')';
+      return parts.filter(Boolean).join(' — ') || '—';
+    }
+    if (type === 'process_end') {
+      return (d.name || '?') + ' (PID ' + (d.pid || '?') + ') exited' + (d.exit_code != null ? ' code ' + d.exit_code : '');
+    }
+    if (type === 'window_focus') {
+      return d.title || '—';
+    }
+    if (type === 'mouse_click') {
+      return (d.button || 'left') + ' click at (' + (d.x || 0) + ', ' + (d.y || 0) + ')' + (d.window ? ' — ' + d.window : '');
+    }
+    if (type === 'clipboard') {
+      const text = d.content || '';
+      return 'Copied: ' + (text.length > 80 ? text.substring(0, 80) + '...' : text);
+    }
+    if (type === 'winlog') {
+      const eid = d.event_id || '?';
+      const log = d.log || '';
+      const msg = d.message || '';
+      const user = d.user ? ' [' + d.user + ']' : '';
+      const script = d.script_block ? ' — ' + (d.script_block.length > 60 ? d.script_block.substring(0, 60) + '...' : d.script_block) : '';
+      return '[' + log + ':' + eid + ']' + user + ' ' + msg + script;
+    }
+
+    // Fallback
+    return JSON.stringify(d).substring(0, 120);
   }
 
   function renderEvents() {
@@ -1132,9 +1172,10 @@
 
     container.innerHTML = playbackEvents.map((e, i) => `
       <div class="event-card" data-index="${i}" onclick="seekToEvent(${i})">
-        <div class="event-time">${formatTimestamp(e.offsetSec)}</div>
+        <div class="event-time" title="${e._ts ? new Date(e._ts).toLocaleString() : ''}">${formatTimestamp(e.offsetSec)}</div>
         <span class="event-type ${eventTypeClass(e.type)}">${e.type || 'event'}</span>
         <div class="event-detail">${eventDetails(e)}</div>
+        ${e._ts ? '<div class="event-ts">' + new Date(e._ts).toLocaleTimeString() + '</div>' : ''}
       </div>
     `).join('');
   }
