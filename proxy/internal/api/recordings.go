@@ -145,6 +145,69 @@ func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Reques
 		recordings = []*recording.Recording{}
 	}
 
+	q := r.URL.Query()
+
+	// Filter by target name.
+	if target := q.Get("target"); target != "" {
+		filtered := make([]*recording.Recording, 0)
+		for _, rec := range recordings {
+			if strings.EqualFold(rec.TargetName, target) || strings.EqualFold(rec.AgentHostname, target) {
+				filtered = append(filtered, rec)
+			}
+		}
+		recordings = filtered
+	}
+
+	// Filter by windows user.
+	if user := q.Get("user"); user != "" {
+		filtered := make([]*recording.Recording, 0)
+		for _, rec := range recordings {
+			if strings.EqualFold(rec.WindowsUser, user) {
+				filtered = append(filtered, rec)
+			}
+		}
+		recordings = filtered
+	}
+
+	// Filter by time range — recordings must be contained within [start, end].
+	if startStr := q.Get("start"); startStr != "" {
+		if start, err := time.Parse(time.RFC3339, startStr); err == nil {
+			filtered := make([]*recording.Recording, 0)
+			for _, rec := range recordings {
+				if !rec.StartedAt.Before(start) {
+					filtered = append(filtered, rec)
+				}
+			}
+			recordings = filtered
+		}
+	}
+	if endStr := q.Get("end"); endStr != "" {
+		if end, err := time.Parse(time.RFC3339, endStr); err == nil {
+			filtered := make([]*recording.Recording, 0)
+			for _, rec := range recordings {
+				recEnd := rec.StartedAt.Add(time.Duration(rec.DurationSecs * float64(time.Second)))
+				if rec.EndedAt != nil {
+					recEnd = *rec.EndedAt
+				}
+				if !recEnd.After(end) {
+					filtered = append(filtered, rec)
+				}
+			}
+			recordings = filtered
+		}
+	}
+
+	// Filter by status.
+	if status := q.Get("status"); status != "" {
+		filtered := make([]*recording.Recording, 0)
+		for _, rec := range recordings {
+			if strings.EqualFold(string(rec.Status), status) {
+				filtered = append(filtered, rec)
+			}
+		}
+		recordings = filtered
+	}
+
 	writeJSON(w, http.StatusOK, recordings)
 }
 
