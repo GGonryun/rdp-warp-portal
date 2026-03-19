@@ -187,8 +187,16 @@ func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Filter by time range — recordings must be contained within [start, end].
+	// Try RFC3339Nano first (handles milliseconds from JS toISOString), fall back to RFC3339.
+	parseTime := func(s string) (time.Time, error) {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t, nil
+		}
+		return time.Parse(time.RFC3339, s)
+	}
+
 	if startStr := q.Get("start"); startStr != "" {
-		if start, err := time.Parse(time.RFC3339, startStr); err == nil {
+		if start, err := parseTime(startStr); err == nil {
 			filtered := make([]*recording.Recording, 0)
 			for _, rec := range recordings {
 				if !rec.StartedAt.Before(start) {
@@ -199,7 +207,7 @@ func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if endStr := q.Get("end"); endStr != "" {
-		if end, err := time.Parse(time.RFC3339, endStr); err == nil {
+		if end, err := parseTime(endStr); err == nil {
 			filtered := make([]*recording.Recording, 0)
 			for _, rec := range recordings {
 				recEnd := rec.StartedAt.Add(time.Duration(rec.DurationSecs * float64(time.Second)))

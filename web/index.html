@@ -407,6 +407,93 @@
       word-break: break-word;
     }
 
+    /* Recording info modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+
+    .modal-overlay.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 480px;
+      max-width: 90vw;
+      max-height: 80vh;
+      overflow-y: auto;
+      padding: 1.5rem;
+      transform: scale(0.95);
+      transition: transform 0.2s;
+    }
+
+    .modal-overlay.show .modal {
+      transform: scale(1);
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .modal-header h3 {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 1.2rem;
+      cursor: pointer;
+      padding: 0.25rem;
+      line-height: 1;
+    }
+
+    .modal-close:hover { color: var(--text); }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 0.5rem 0.75rem;
+      font-size: 0.85rem;
+    }
+
+    .info-label {
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding-top: 0.15rem;
+    }
+
+    .info-value {
+      color: var(--text);
+      word-break: break-all;
+    }
+
+    .btn-info {
+      background: var(--border);
+      color: var(--text);
+    }
+
+    .btn-info:hover { background: #3a3d4a; }
+
     @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
       .playback-view { flex-direction: column; height: auto; }
@@ -577,6 +664,16 @@
     <div id="access-container">
       <div class="empty-state">No access grants found.</div>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="recording-info-modal" onclick="closeRecordingInfo(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Recording Details</h3>
+      <button class="modal-close" onclick="closeRecordingInfo()">&times;</button>
+    </div>
+    <div class="info-grid" id="recording-info-body"></div>
   </div>
 </div>
 
@@ -978,6 +1075,7 @@
           <td>${formatBytes(r.total_bytes)}</td>
           <td>${relativeTime(r.started_at)}</td>
           <td class="actions">
+            <button class="btn-sm btn-info" onclick="showRecordingInfo('${r.id}')">Info</button>
             <button class="btn-sm btn-play" onclick="openPlayback('${r.id}', '${r.started_at || ''}')">Play</button>
             <button class="btn-sm btn-danger" onclick="deleteRecording('${r.id}')">Delete</button>
           </td>
@@ -1004,6 +1102,50 @@
     } catch (e) {
       console.error('Failed to delete recording', e);
     }
+  }
+
+  // Recording info modal
+  async function showRecordingInfo(id) {
+    const body = document.getElementById('recording-info-body');
+    body.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:1rem;">Loading...</div>';
+    document.getElementById('recording-info-modal').classList.add('show');
+
+    try {
+      const resp = await apiFetch(API + '/api/recordings/' + id);
+      if (!resp.ok) throw new Error('Failed to fetch recording');
+      const r = await resp.json();
+
+      const started = r.started_at ? new Date(r.started_at).toLocaleString() : '—';
+      const ended = r.ended_at ? new Date(r.ended_at).toLocaleString() : '—';
+
+      const rows = [
+        ['ID', r.id],
+        ['Session ID', r.session_id || '—'],
+        ['Status', r.status],
+        ['Target', r.target_name || '—'],
+        ['Target ID', r.target_id || '—'],
+        ['Windows User', r.windows_user || '—'],
+        ['Proxy User', r.proxy_user || '—'],
+        ['Agent Host', r.agent_hostname || '—'],
+        ['Started', started],
+        ['Ended', ended],
+        ['Duration', formatDuration(r.duration_secs)],
+        ['Size', formatBytes(r.total_bytes)],
+        ['Chunks', r.chunk_count != null ? r.chunk_count : '—'],
+        ['Events', r.event_count != null ? r.event_count : '—'],
+      ];
+
+      body.innerHTML = rows.map(([label, value]) =>
+        `<div class="info-label">${label}</div><div class="info-value">${value}</div>`
+      ).join('');
+    } catch (e) {
+      body.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--red);padding:1rem;">Failed to load recording details.</div>';
+    }
+  }
+
+  function closeRecordingInfo(event) {
+    if (event && event.target !== event.currentTarget) return;
+    document.getElementById('recording-info-modal').classList.remove('show');
   }
 
   // Access Control
