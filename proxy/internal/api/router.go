@@ -56,6 +56,17 @@ func (r *Router) HandleFunc(pattern string, handler http.HandlerFunc, requireAut
 // ServeHTTP implements http.Handler.
 // If an API key is configured, all /api/ requests are gated.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// Set CORS headers for all requests
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	// Handle preflight OPTIONS requests
+	if req.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if r.apiKey != "" && strings.HasPrefix(req.URL.Path, "/api/") {
 		authHeader := req.Header.Get("Authorization")
 		if authHeader == "" {
