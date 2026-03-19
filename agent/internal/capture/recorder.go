@@ -109,6 +109,12 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 	r.clipboard = NewClipboardTracker(1*time.Second, r.handleClipboardEvent)
 	go r.clipboard.Run(ctx)
 
+	// Start Windows Event Log capture.
+	r.winlog = NewWinLogCapture(r.handleWinLogEvent)
+	if err := r.winlog.Start(ctx); err != nil {
+		slog.Warn("failed to start windows event log capture", "error", err)
+	}
+
 	// Start event flush goroutine.
 	go r.flushLoop(ctx)
 
@@ -134,6 +140,12 @@ func (r *Recorder) Stop() error {
 		}
 	}
 
+	// Stop Windows Event Log capture.
+	if r.winlog != nil {
+		if err := r.winlog.Stop(); err != nil {
+			slog.Warn("error stopping winlog capture", "error", err)
+		}
+	}
 
 
 	// Cancel context (stops window tracker and flush loop).
@@ -295,14 +307,84 @@ func (r *Recorder) handleClipboardEvent(ce ClipboardEvent) {
 	r.mu.Unlock()
 }
 
-// isAgentWinLogEvent returns true if the Windows Event Log entry is about the agent itself.
+// isAgentWinLogEvent returns true if the Windows Event Log entry is about the agent itself
+// or noisy system processes with low security value.
 func isAgentWinLogEvent(message string) bool {
 	lower := strings.ToLower(message)
+
+	// Agent infrastructure
 	if strings.Contains(lower, "agent.exe") || strings.Contains(lower, "p0rtal-agent") || strings.Contains(lower, "p0rtal") || strings.Contains(lower, "rdp-warp-portal") {
 		return true
 	}
 	if strings.Contains(lower, "ffmpeg.exe") || strings.Contains(lower, "ffmpeg") {
 		return true
+	}
+	if strings.Contains(lower, "icacls") {
+		return true
+	}
+	if strings.Contains(lower, "c:\\p0rtal") || strings.Contains(lower, `c:\p0rtal`) {
+		return true
+	}
+
+	// System processes (noisy, low security value)
+	noisyProcesses := []string{
+		"svchost.exe",
+		"wmiprvse.exe",
+		"searchindexer.exe",
+		"runtimebroker.exe",
+		"backgroundtaskhost.exe",
+		"compattelrunner.exe",
+		"diagtrack",
+		"searchprotocolhost.exe",
+		"searchfilterhost.exe",
+		"taskhostw.exe",
+	}
+	for _, proc := range noisyProcesses {
+		if strings.Contains(lower, proc) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isAgentScriptBlock returns true if the PowerShell script block is from the agent's
+// winlog polling infrastructure.
+func isAgentScriptBlock(scriptBlock string) bool {
+	lower := strings.ToLower(scriptBlock)
+	// Agent's winlog polling script patterns
+	if strings.Contains(lower, "get-winevent -filterhashtable") {
+		return true
+	}
+	if strings.Contains(lower, "register-wmievent") {
+		return true
+	}
+	if strings.Contains(lower, "$eventids = @(4624") {
+		return true
+	}
+	if strings.Contains(lower, "$lastcheck = (get-date)") {
+		return true
+	}
+	return false
+}
+
+// isSystemAccountLogon returns true if the event is a logon/logoff event for a system account.
+func isSystemAccountLogon(eventID int, user string) bool {
+	// Only filter for logon-related events
+	if eventID != 4624 && eventID != 4634 && eventID != 4647 {
+		return false
+	}
+	lower := strings.ToLower(user)
+	systemAccounts := []string{
+		"system", "nt authority\\system",
+		"local service", "nt authority\\local service",
+		"network service", "nt authority\\network service",
+		"dwm-", "umfd-",
+	}
+	for _, acct := range systemAccounts {
+		if strings.Contains(lower, acct) {
+			return true
+		}
 	}
 	return false
 }
@@ -310,6 +392,12 @@ func isAgentWinLogEvent(message string) bool {
 // handleWinLogEvent converts a WinLogEvent to a RecordingEvent and buffers it.
 func (r *Recorder) handleWinLogEvent(we WinLogEvent) {
 	if isAgentWinLogEvent(we.Message) {
+		return
+	}
+	if isSystemAccountLogon(we.EventID, we.User) {
+		return
+	}
+	if we.ScriptBlock != "" && isAgentScriptBlock(we.ScriptBlock) {
 		return
 	}
 	data := map[string]any{

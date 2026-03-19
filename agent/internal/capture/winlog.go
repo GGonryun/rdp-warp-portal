@@ -45,8 +45,10 @@ import (
 
 const winlogScript = `
 $lastCheck = (Get-Date).AddSeconds(-5)
-$eventIds = @(4624,4625,4634,4647,4648,4672,4688,4689,4698,4699,4702,4720,4722,4725,4726,4732,4733,4740,4756,4946,4947,4948)
-$sysEventIds = @(7036,7040,7045)
+# Security events — high-value only. Process create/terminate (4688/4689) excluded
+# since they are captured separately by WMI and generate too much noise here.
+$eventIds = @(4624,4625,4634,4647,4648,4672,4698,4699,4702,4720,4722,4725,4726,4732,4733,4740,4756,4946,4947,4948)
+$sysEventIds = @(7045)
 $psEventIds = @(4104)
 
 while ($true) {
