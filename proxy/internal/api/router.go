@@ -100,6 +100,7 @@ func (r *Router) loggingMiddleware(next http.Handler) http.Handler {
 		r.logger.Info("request completed",
 			"method", req.Method,
 			"path", req.URL.Path,
+			"query", req.URL.RawQuery,
 			"status", wrapped.statusCode,
 			"duration_ms", duration.Milliseconds(),
 			"request_id", requestID,
