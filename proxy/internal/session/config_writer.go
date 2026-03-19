@@ -67,6 +67,7 @@ ClientTlsSecurity = true
 ClientNlaSecurity = true
 ClientRdpSecurity = true
 ClientAllowFallbackToTls = true
+ClientAllowFallbackToRdp = true
 
 [Certificates]
 CertificateFile = {{.CertificateFile}}
