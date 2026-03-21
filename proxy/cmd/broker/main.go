@@ -21,6 +21,7 @@ import (
 	"github.com/p0-security/rdp-broker/internal/config"
 	"github.com/p0-security/rdp-broker/internal/credential"
 	"github.com/p0-security/rdp-broker/internal/recording"
+	"github.com/p0-security/rdp-broker/internal/secrets"
 	"github.com/p0-security/rdp-broker/internal/session"
 )
 
@@ -130,6 +131,27 @@ func main() {
 	recordingStore := recording.NewStore(cfg.RecordingsDir)
 	recordingsHandler := api.NewRecordingsHandler(recordingStore)
 	recordingsHandler.RegisterRoutes(router)
+
+	// Initialize secrets handler (optional — requires WIF configuration)
+	var secretsHandler *api.SecretsHandler
+	if cfg.WIFConfigured() {
+		tokenProvider := secrets.NewTokenProvider(
+			cfg.AzureCredentialURL,
+			cfg.GCPWIFAudience,
+			cfg.GCPServiceAccount,
+			logger,
+		)
+		secretClient := secrets.NewClient(tokenProvider, logger)
+		secretsHandler = api.NewSecretsHandler(secretClient, cfg.AzureCredentialURL, cfg.GCPServiceAccount)
+		logger.Info("secrets handler initialized (WIF configured)",
+			"azure_credential_url", cfg.AzureCredentialURL,
+			"gcp_service_account", cfg.GCPServiceAccount,
+		)
+	} else {
+		secretsHandler = api.NewSecretsHandler(nil, cfg.AzureCredentialURL, cfg.GCPServiceAccount)
+		logger.Info("secrets handler registered (WIF not configured)")
+	}
+	secretsHandler.RegisterRoutes(router)
 
 	// Serve the web dashboard at /
 	if cfg.WebDir != "" {

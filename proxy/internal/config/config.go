@@ -31,6 +31,11 @@ type Config struct {
 	SessionMaxDuration       time.Duration
 	TokenTTL                 time.Duration
 	LogFormat                string
+
+	// Workload Identity Federation (optional — all three must be set to enable)
+	AzureCredentialURL string // Full Azure IMDS token URL
+	GCPWIFAudience     string // Google WIF audience URL
+	GCPServiceAccount  string // Google service account email to impersonate
 }
 
 // Load reads configuration from environment variables with defaults.
@@ -58,6 +63,11 @@ func Load() (*Config, error) {
 		SessionMaxDuration:       8 * time.Hour,
 		TokenTTL:                 5 * time.Minute,
 		LogFormat:                "json",
+
+		// WIF (optional)
+		AzureCredentialURL: os.Getenv("AZURE_CREDENTIAL_URL"),
+		GCPWIFAudience:    os.Getenv("GCP_WIF_AUDIENCE"),
+		GCPServiceAccount: os.Getenv("GCP_SERVICE_ACCOUNT"),
 	}
 
 	if cfg.BrokerHost == "" {
@@ -70,6 +80,11 @@ func Load() (*Config, error) {
 // PortPoolSize returns the number of ports available in the pool.
 func (c *Config) PortPoolSize() int {
 	return c.ProxyPortEnd - c.ProxyPortStart + 1
+}
+
+// WIFConfigured returns true if all WIF settings are present.
+func (c *Config) WIFConfigured() bool {
+	return c.AzureCredentialURL != "" && c.GCPWIFAudience != "" && c.GCPServiceAccount != ""
 }
 
 // getEnvString returns the environment variable value or the default.
