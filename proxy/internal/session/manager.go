@@ -140,7 +140,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username,
 	// Get credentials from provider
 	creds, err := m.provider.GetTargetCredentials(ctx, targetID, username)
 	if err != nil {
-		if errors.Is(err, credential.ErrTargetNotFound) {
+		if errors.Is(err, credential.ErrTargetNotFound) || errors.Is(err, credential.ErrUserNotFound) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
