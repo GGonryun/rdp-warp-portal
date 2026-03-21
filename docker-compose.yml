@@ -9,6 +9,9 @@ services:
       - BROKER_HOST=${BROKER_HOST}
       - API_KEY=${API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      - AZURE_CREDENTIAL_URL=${AZURE_CREDENTIAL_URL}
+      - GCP_WIF_AUDIENCE=${GCP_WIF_AUDIENCE}
+      - GCP_SERVICE_ACCOUNT=${GCP_SERVICE_ACCOUNT}
     volumes:
       - ./proxy/targets.json:/etc/rdp-broker/targets.json:ro
       - ./web:/usr/share/p0rtal/web:ro

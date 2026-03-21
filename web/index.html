@@ -530,6 +530,7 @@
   <button class="active" data-tab="sessions" onclick="switchTab('sessions')">Sessions</button>
   <button data-tab="recordings" onclick="switchTab('recordings')">Recordings</button>
   <button data-tab="access" onclick="switchTab('access')">Access Control</button>
+  <button data-tab="secrets" onclick="switchTab('secrets')">Secrets</button>
 </div>
 
 <div id="tab-sessions" class="tab-content active">
@@ -663,6 +664,29 @@
     </div>
     <div id="access-container">
       <div class="empty-state">No access grants found.</div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-secrets" class="tab-content">
+  <div class="grid" style="grid-template-columns: 400px 1fr;">
+    <div>
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <h2>WIF Status</h2>
+        <div id="wif-status" class="empty-state">Checking...</div>
+      </div>
+      <div class="card">
+        <h2>Read Secret</h2>
+        <div class="form-group">
+          <label for="secret-name">Secret Resource Name</label>
+          <input type="text" id="secret-name" placeholder="projects/PROJECT/secrets/SECRET_NAME">
+        </div>
+        <button class="btn-primary" id="read-secret-btn" onclick="readSecret()">Read Secret</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Result</h2>
+      <div id="secret-result" class="empty-state">Enter a secret name and click Read Secret.</div>
     </div>
   </div>
 </div>
@@ -975,6 +999,9 @@
     }
     if (tab === 'access') {
       loadAccess();
+    }
+    if (tab === 'secrets') {
+      loadSecretsStatus();
     }
   }
 
@@ -1460,6 +1487,66 @@
         }
       }
     });
+  }
+
+  // Secrets tab
+  async function loadSecretsStatus() {
+    try {
+      const resp = await apiFetch(API + '/api/secrets/status');
+      const data = await resp.json();
+      const el = document.getElementById('wif-status');
+      if (data.configured) {
+        el.innerHTML = `
+          <div style="text-align:left;">
+            <div style="margin-bottom:0.5rem;"><span class="state state-active">Configured</span></div>
+            <div style="font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem;">Azure Credential URL: <span class="mono">${data.azure_credential_url || '—'}</span></div>
+            <div style="font-size:0.8rem;color:var(--muted);">GCP SA: <span class="mono">${data.gcp_service_account || '—'}</span></div>
+          </div>`;
+      } else {
+        el.innerHTML = '<span class="state state-expired">Not Configured</span><br><small style="color:var(--muted);margin-top:0.5rem;display:inline-block;">Set AZURE_CREDENTIAL_URL, GCP_WIF_AUDIENCE, and GCP_SERVICE_ACCOUNT env vars.</small>';
+      }
+    } catch (e) {
+      document.getElementById('wif-status').innerHTML = '<span class="state state-error">Error</span>';
+    }
+  }
+
+  async function readSecret() {
+    const name = document.getElementById('secret-name').value.trim();
+    if (!name) { toast('Enter a secret name', 'error'); return; }
+
+    const btn = document.getElementById('read-secret-btn');
+    btn.disabled = true;
+    btn.textContent = 'Reading...';
+    const resultEl = document.getElementById('secret-result');
+    resultEl.innerHTML = '<div class="empty-state">Loading...</div>';
+
+    try {
+      const resp = await apiFetch(API + '/api/secrets/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret_name: name })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.message || 'Failed to read secret');
+      }
+
+      const data = await resp.json();
+      resultEl.innerHTML = `
+        <div style="text-align:left;">
+          <div style="margin-bottom:0.5rem;font-size:0.8rem;color:var(--muted);">Secret: <span class="mono">${data.secret_name}</span></div>
+          <div style="margin-bottom:0.5rem;font-size:0.8rem;color:var(--muted);">Length: ${data.length} bytes</div>
+          <pre style="background:var(--bg);padding:1rem;border-radius:6px;overflow-x:auto;font-size:0.85rem;white-space:pre-wrap;word-break:break-all;">${data.value}</pre>
+        </div>`;
+      toast('Secret read successfully');
+    } catch (e) {
+      resultEl.innerHTML = '<div class="empty-state" style="color:var(--red);">' + e.message + '</div>';
+      toast(e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Read Secret';
+    }
   }
 
   // Init — restore API key from localStorage
