@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -173,7 +174,7 @@ func (p *GSMProvider) GetTargetCredentials(ctx context.Context, targetID, userna
 
 	var matchedUser *TargetUser
 	for i := range target.Users {
-		if target.Users[i].Username == username {
+		if strings.EqualFold(target.Users[i].Username, username) {
 			u := target.Users[i] // copy
 			matchedUser = &u
 			break

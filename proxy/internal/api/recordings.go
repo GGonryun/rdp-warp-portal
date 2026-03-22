@@ -175,11 +175,17 @@ func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Reques
 		recordings = filtered
 	}
 
-	// Filter by windows user.
+	// Filter by windows user. If the filter is an email address, also match
+	// against just the local part (e.g. "golden.marmot@p0lab1.internal"
+	// matches a WindowsUser of "golden.marmot").
 	if user := q.Get("user"); user != "" {
+		localPart := user
+		if i := strings.Index(user, "@"); i > 0 {
+			localPart = user[:i]
+		}
 		filtered := make([]*recording.Recording, 0)
 		for _, rec := range recordings {
-			if strings.EqualFold(rec.WindowsUser, user) {
+			if strings.EqualFold(rec.WindowsUser, user) || strings.EqualFold(rec.WindowsUser, localPart) {
 				filtered = append(filtered, rec)
 			}
 		}

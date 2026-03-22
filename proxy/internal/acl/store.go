@@ -43,7 +43,7 @@ func NewMemoryStore() *MemoryStore {
 
 func (s *MemoryStore) GrantAccess(_ context.Context, email, targetID, username string) error {
 	key := normalizeEmail(email)
-	grant := Grant{TargetID: targetID, Username: username}
+	grant := Grant{TargetID: targetID, Username: strings.ToLower(username)}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -59,7 +59,7 @@ func (s *MemoryStore) GrantAccess(_ context.Context, email, targetID, username s
 
 func (s *MemoryStore) RevokeAccess(_ context.Context, email, targetID, username string) error {
 	key := normalizeEmail(email)
-	grant := Grant{TargetID: targetID, Username: username}
+	grant := Grant{TargetID: targetID, Username: strings.ToLower(username)}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -75,7 +75,7 @@ func (s *MemoryStore) RevokeAccess(_ context.Context, email, targetID, username 
 
 func (s *MemoryStore) HasAccess(_ context.Context, email, targetID, username string) (bool, error) {
 	key := normalizeEmail(email)
-	grant := Grant{TargetID: targetID, Username: username}
+	grant := Grant{TargetID: targetID, Username: strings.ToLower(username)}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()

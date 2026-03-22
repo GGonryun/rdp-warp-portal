@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"os/exec"
 	"sync"
 	"time"
@@ -351,6 +352,22 @@ func (m *Manager) GetSession(sessionID string) (*Session, error) {
 	return session, nil
 }
 
+// matchesUser reports whether a session's UserID matches the given filter.
+// It matches on exact equality or, if the filter is an email address, on the
+// local part (e.g. "golden.marmot" matches "golden.marmot@p0lab1.internal").
+func matchesUser(sessionUserID, filter string) bool {
+	if strings.EqualFold(sessionUserID, filter) {
+		return true
+	}
+	if i := strings.Index(filter, "@"); i > 0 {
+		localPart := filter[:i]
+		if strings.EqualFold(sessionUserID, localPart) {
+			return true
+		}
+	}
+	return false
+}
+
 // ListSessions returns all sessions (active + terminated) for a user (or all if userID is empty).
 func (m *Manager) ListSessions(userID string) []*Session {
 	m.mu.RLock()
@@ -359,13 +376,13 @@ func (m *Manager) ListSessions(userID string) []*Session {
 	var sessions []*Session
 	// Active sessions
 	for _, s := range m.sessions {
-		if userID == "" || s.UserID == userID {
+		if userID == "" || matchesUser(s.UserID, userID) {
 			sessions = append(sessions, s)
 		}
 	}
 	// Terminated sessions from history
 	for _, s := range m.history {
-		if userID == "" || s.UserID == userID {
+		if userID == "" || matchesUser(s.UserID, userID) {
 			sessions = append(sessions, s)
 		}
 	}
