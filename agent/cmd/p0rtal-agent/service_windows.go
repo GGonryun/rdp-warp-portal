@@ -125,6 +125,17 @@ func runAsService() {
 // installDir is the fixed installation directory for the service.
 const installDir = `C:\p0rtal`
 
+// sampleConfig is written to config.json when no existing config is found.
+const sampleConfig = `{
+  "proxy_url": "https://your-broker-host",
+  "api_key": "your-api-key",
+  "framerate": 10,
+  "chunk_secs": 8,
+  "poll_interval": 5,
+  "resize_poll_ms": 1000
+}
+`
+
 // installService copies the agent and config to C:\p0rtal and installs the Windows service.
 func installService(configPath string) error {
 	srcExe, err := os.Executable()
@@ -167,14 +178,22 @@ func installService(configPath string) error {
 	}
 	fmt.Printf("Copied agent.exe to %s\n", dstExe)
 
-	// Copy config.json if it exists next to the source executable.
+	// Use existing config.json if found next to the executable, otherwise
+	// create a sample one so the agent is ready to configure after install.
+	dstConfig := filepath.Join(installDir, "config.json")
 	srcConfig := filepath.Join(srcDir, configPath)
 	if _, err := os.Stat(srcConfig); err == nil {
-		dstConfig := filepath.Join(installDir, "config.json")
 		if err := copyFile(srcConfig, dstConfig); err != nil {
 			return fmt.Errorf("copy config.json: %w", err)
 		}
 		fmt.Printf("Copied config.json to %s\n", dstConfig)
+	} else if _, err := os.Stat(dstConfig); err != nil {
+		// No config exists at all — create a sample one.
+		if err := os.WriteFile(dstConfig, []byte(sampleConfig), 0644); err != nil {
+			return fmt.Errorf("create config.json: %w", err)
+		}
+		fmt.Printf("Created sample config.json at %s\n", dstConfig)
+		fmt.Println("  Edit this file with your broker URL and API key, then restart the service.")
 	}
 
 	// Copy ffmpeg.exe if it exists next to the source executable.
