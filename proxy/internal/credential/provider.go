@@ -161,7 +161,7 @@ type TargetInfo struct {
 // TargetUser represents a user account available on a target machine.
 type TargetUser struct {
 	Username string `json:"username"`
-	Password string `json:"password"`
+	Secret   string `json:"secret"`
 }
 
 // TargetDestination contains a target with all its available user accounts.

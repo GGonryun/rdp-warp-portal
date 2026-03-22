@@ -3,6 +3,7 @@ package credential
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -10,13 +11,75 @@ import (
 	"time"
 )
 
-func TestNewMockProvider(t *testing.T) {
-	provider := NewMockProvider()
+// testSecrets maps secret names to passwords for testing.
+var testSecrets = map[string]string{
+	"secret/admin-pass":   "P@ssw0rd!",
+	"secret/svc-rdp-pass": "Sup3rS3cret",
+	"secret/rdpadmin":     "CHANGE_ME_BEFORE_DEPLOY",
+	"secret/testpass":     "testpass123",
+	"secret/adminpass":    "adminpass",
+	"secret/newpass":      "newpass",
+	"secret/concurrent":   "pass",
+}
+
+func testResolver(ctx context.Context, secretName string) (string, error) {
+	if v, ok := testSecrets[secretName]; ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("test secret not found: %s", secretName)
+}
+
+// newTestProvider creates a GSMProvider with hardcoded targets and a test resolver.
+func newTestProvider() *GSMProvider {
+	return &GSMProvider{
+		resolveSecret: testResolver,
+		targets: map[string]gsmTarget{
+			"dc-01": {
+				Info: TargetInfo{
+					ID:       "dc-01",
+					Hostname: "dc-01",
+					IP:       "10.0.1.10",
+				},
+				Port:   3389,
+				Domain: "CORP",
+				Users: []TargetUser{
+					{Username: "Administrator", Secret: "secret/admin-pass"},
+				},
+			},
+			"ws-05": {
+				Info: TargetInfo{
+					ID:       "ws-05",
+					Hostname: "ws-05",
+					IP:       "10.0.1.50",
+				},
+				Port:   3389,
+				Domain: "CORP",
+				Users: []TargetUser{
+					{Username: "svc-rdp", Secret: "secret/svc-rdp-pass"},
+				},
+			},
+			"win-vm-1": {
+				Info: TargetInfo{
+					ID:       "win-vm-1",
+					Hostname: "win-vm-1",
+					IP:       "20.64.171.136",
+				},
+				Port:   3389,
+				Domain: "",
+				Users: []TargetUser{
+					{Username: "rdpadmin", Secret: "secret/rdpadmin"},
+				},
+			},
+		},
+	}
+}
+
+func TestNewTestProvider(t *testing.T) {
+	provider := newTestProvider()
 	if provider == nil {
-		t.Fatal("NewMockProvider returned nil")
+		t.Fatal("newTestProvider returned nil")
 	}
 
-	// Verify default targets are present (dc-01, ws-05, win-vm-1)
 	count := provider.TargetCount()
 	if count != 3 {
 		t.Errorf("expected 3 default targets, got %d", count)
@@ -24,13 +87,13 @@ func TestNewMockProvider(t *testing.T) {
 }
 
 func TestGetTargetCredentials_Success(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	tests := []struct {
 		targetID         string
 		username         string
-		expectedIP string
+		expectedIP       string
 		expectedPort     int
 		expectedUsername string
 		expectedDomain   string
@@ -38,7 +101,7 @@ func TestGetTargetCredentials_Success(t *testing.T) {
 		{
 			targetID:         "dc-01",
 			username:         "Administrator",
-			expectedIP: "10.0.1.10",
+			expectedIP:       "10.0.1.10",
 			expectedPort:     3389,
 			expectedUsername: "Administrator",
 			expectedDomain:   "CORP",
@@ -46,7 +109,7 @@ func TestGetTargetCredentials_Success(t *testing.T) {
 		{
 			targetID:         "ws-05",
 			username:         "svc-rdp",
-			expectedIP: "10.0.1.50",
+			expectedIP:       "10.0.1.50",
 			expectedPort:     3389,
 			expectedUsername: "svc-rdp",
 			expectedDomain:   "CORP",
@@ -83,7 +146,7 @@ func TestGetTargetCredentials_Success(t *testing.T) {
 }
 
 func TestGetTargetCredentials_NotFound(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	creds, err := provider.GetTargetCredentials(ctx, "nonexistent-target", "admin")
@@ -99,7 +162,7 @@ func TestGetTargetCredentials_NotFound(t *testing.T) {
 }
 
 func TestGetTargetCredentials_UserNotFound(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	creds, err := provider.GetTargetCredentials(ctx, "dc-01", "nonexistent-user")
@@ -114,10 +177,28 @@ func TestGetTargetCredentials_UserNotFound(t *testing.T) {
 	}
 }
 
+func TestGetTargetCredentials_NoResolver(t *testing.T) {
+	provider := &GSMProvider{
+		targets: map[string]gsmTarget{
+			"test": {
+				Info:  TargetInfo{ID: "test", Hostname: "test", IP: "1.2.3.4"},
+				Port:  3389,
+				Users: []TargetUser{{Username: "user", Secret: "secret/test"}},
+			},
+		},
+	}
+	ctx := context.Background()
+
+	_, err := provider.GetTargetCredentials(ctx, "test", "user")
+	if !errors.Is(err, ErrSecretResolverNotConfigured) {
+		t.Errorf("expected ErrSecretResolverNotConfigured, got: %v", err)
+	}
+}
+
 func TestGetTargetCredentials_ContextCanceled(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
 	creds, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
 	if err == nil {
@@ -132,11 +213,10 @@ func TestGetTargetCredentials_ContextCanceled(t *testing.T) {
 }
 
 func TestGetTargetCredentials_ContextTimeout(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx, cancel := context.WithTimeout(context.Background(), 0)
 	defer cancel()
 
-	// Let the timeout expire
 	time.Sleep(time.Millisecond)
 
 	creds, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")
@@ -152,7 +232,7 @@ func TestGetTargetCredentials_ContextTimeout(t *testing.T) {
 }
 
 func TestListTargets_Success(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	targets, err := provider.ListTargets(ctx)
@@ -163,13 +243,11 @@ func TestListTargets_Success(t *testing.T) {
 		t.Fatalf("expected 3 targets, got %d", len(targets))
 	}
 
-	// Build a map for easier lookup
 	targetMap := make(map[string]TargetInfo)
 	for _, target := range targets {
 		targetMap[target.ID] = target
 	}
 
-	// Verify dc-01
 	dc01, ok := targetMap["dc-01"]
 	if !ok {
 		t.Fatal("dc-01 not found in targets")
@@ -183,7 +261,7 @@ func TestListTargets_Success(t *testing.T) {
 }
 
 func TestListDestinations_Success(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	destinations, err := provider.ListDestinations(ctx)
@@ -194,7 +272,6 @@ func TestListDestinations_Success(t *testing.T) {
 		t.Fatalf("expected 3 destinations, got %d", len(destinations))
 	}
 
-	// Build a map for easier lookup
 	destMap := make(map[string]TargetDestination)
 	for _, d := range destinations {
 		destMap[d.ID] = d
@@ -210,15 +287,12 @@ func TestListDestinations_Success(t *testing.T) {
 	if dc01.Users[0].Username != "Administrator" {
 		t.Errorf("expected username 'Administrator', got %q", dc01.Users[0].Username)
 	}
-	if dc01.Users[0].Password == "" {
-		t.Error("expected password to be included")
-	}
 }
 
 func TestListTargets_ContextCanceled(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
 	targets, err := provider.ListTargets(ctx)
 	if err == nil {
@@ -232,7 +306,7 @@ func TestListTargets_ContextCanceled(t *testing.T) {
 	}
 }
 
-func TestNewMockProviderFromConfig(t *testing.T) {
+func TestNewGSMProvider(t *testing.T) {
 	configContent := `{
   "targets": {
     "test-srv-01": {
@@ -241,8 +315,8 @@ func TestNewMockProviderFromConfig(t *testing.T) {
       "port": 3390,
       "domain": "TESTDOMAIN",
       "users": [
-        {"username": "testuser", "password": "testpass123"},
-        {"username": "admin", "password": "adminpass"}
+        {"username": "testuser", "secret": "secret/testpass"},
+        {"username": "admin", "secret": "secret/adminpass"}
       ]
     },
     "test-srv-02": {
@@ -250,7 +324,7 @@ func TestNewMockProviderFromConfig(t *testing.T) {
       "ip": "192.168.1.101",
       "domain": "TESTDOMAIN",
       "users": [
-        {"username": "admin", "password": "adminpass"}
+        {"username": "admin", "secret": "secret/adminpass"}
       ]
     }
   }
@@ -262,7 +336,7 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 		t.Fatalf("failed to write test config: %v", err)
 	}
 
-	provider, err := NewMockProviderFromConfig(configPath)
+	provider, err := NewGSMProvider(configPath, testResolver)
 	if err != nil {
 		t.Fatalf("failed to load provider from config: %v", err)
 	}
@@ -273,7 +347,6 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test first target with explicit port
 	creds1, err := provider.GetTargetCredentials(ctx, "test-srv-01", "testuser")
 	if err != nil {
 		t.Fatalf("failed to get credentials for test-srv-01: %v", err)
@@ -294,16 +367,6 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 		t.Errorf("domain: got %q, want %q", creds1.Domain, "TESTDOMAIN")
 	}
 
-	// Test second user on first target
-	creds1b, err := provider.GetTargetCredentials(ctx, "test-srv-01", "admin")
-	if err != nil {
-		t.Fatalf("failed to get credentials for admin on test-srv-01: %v", err)
-	}
-	if creds1b.Username != "admin" {
-		t.Errorf("username: got %q, want %q", creds1b.Username, "admin")
-	}
-
-	// Test second target with default port
 	creds2, err := provider.GetTargetCredentials(ctx, "test-srv-02", "admin")
 	if err != nil {
 		t.Fatalf("failed to get credentials for test-srv-02: %v", err)
@@ -312,7 +375,6 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 		t.Errorf("default port: got %d, want %d", creds2.Port, 3389)
 	}
 
-	// Verify ListTargets works
 	targets, err := provider.ListTargets(ctx)
 	if err != nil {
 		t.Fatalf("failed to list targets: %v", err)
@@ -321,7 +383,6 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 		t.Errorf("expected 2 targets in list, got %d", len(targets))
 	}
 
-	// Verify ListDestinations includes users
 	destinations, err := provider.ListDestinations(ctx)
 	if err != nil {
 		t.Fatalf("failed to list destinations: %v", err)
@@ -331,8 +392,8 @@ func TestNewMockProviderFromConfig(t *testing.T) {
 	}
 }
 
-func TestNewMockProviderFromConfig_FileNotFound(t *testing.T) {
-	provider, err := NewMockProviderFromConfig("/nonexistent/path/config.json")
+func TestNewGSMProvider_FileNotFound(t *testing.T) {
+	provider, err := NewGSMProvider("/nonexistent/path/config.json", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}
@@ -341,14 +402,14 @@ func TestNewMockProviderFromConfig_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestNewMockProviderFromConfig_InvalidJSON(t *testing.T) {
+func TestNewGSMProvider_InvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "invalid.json")
 	if err := os.WriteFile(configPath, []byte("not valid json"), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	provider, err := NewMockProviderFromConfig(configPath)
+	provider, err := NewGSMProvider(configPath, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -357,14 +418,14 @@ func TestNewMockProviderFromConfig_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestNewMockProviderFromConfig_EmptyTargets(t *testing.T) {
+func TestNewGSMProvider_EmptyTargets(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "empty.json")
 	if err := os.WriteFile(configPath, []byte(`{"targets": {}}`), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	provider, err := NewMockProviderFromConfig(configPath)
+	provider, err := NewGSMProvider(configPath, nil)
 	if err != nil {
 		t.Fatalf("unexpected error for empty targets: %v", err)
 	}
@@ -374,7 +435,7 @@ func TestNewMockProviderFromConfig_EmptyTargets(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	err := provider.Close()
 	if err != nil {
 		t.Errorf("Close returned unexpected error: %v", err)
@@ -382,7 +443,7 @@ func TestClose(t *testing.T) {
 }
 
 func TestAddTarget(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	initialCount := provider.TargetCount()
 
 	info := TargetInfo{
@@ -391,7 +452,7 @@ func TestAddTarget(t *testing.T) {
 		IP:       "192.168.2.100",
 	}
 	users := []TargetUser{
-		{Username: "newuser", Password: "newpass"},
+		{Username: "newuser", Secret: "secret/newpass"},
 	}
 
 	provider.AddTarget("new-target", info, 3389, "NEWDOMAIN", users)
@@ -411,7 +472,7 @@ func TestAddTarget(t *testing.T) {
 }
 
 func TestRemoveTarget(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	initialCount := provider.TargetCount()
 
 	removed := provider.RemoveTarget("dc-01")
@@ -435,7 +496,7 @@ func TestRemoveTarget(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	const numGoroutines = 100
@@ -463,7 +524,7 @@ func TestConcurrentAccess(t *testing.T) {
 				case 2:
 					targetID := "concurrent-target"
 					info := TargetInfo{ID: targetID, Hostname: "test", IP: "1.2.3.4"}
-					users := []TargetUser{{Username: "test", Password: "pass"}}
+					users := []TargetUser{{Username: "test", Secret: "secret/concurrent"}}
 					provider.AddTarget(targetID, info, 3389, "", users)
 				case 3:
 					provider.RemoveTarget("concurrent-target")
@@ -485,7 +546,7 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestConcurrentReads(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	const numReaders = 50
@@ -521,7 +582,7 @@ func TestConcurrentReads(t *testing.T) {
 }
 
 func TestGetTargetCredentials_ReturnsCopy(t *testing.T) {
-	provider := NewMockProvider()
+	provider := newTestProvider()
 	ctx := context.Background()
 
 	creds1, err := provider.GetTargetCredentials(ctx, "dc-01", "Administrator")

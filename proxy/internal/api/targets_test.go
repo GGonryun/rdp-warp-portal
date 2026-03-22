@@ -62,14 +62,14 @@ func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 		{
 			ID: "dc-01", Hostname: "dc-01", IP: "10.0.1.10",
 			Users: []credential.TargetUser{
-				{Username: "Administrator", Password: "P@ssw0rd!"},
+				{Username: "Administrator"},
 			},
 		},
 		{
 			ID: "ws-01", Hostname: "ws-01", IP: "10.0.1.50",
 			Users: []credential.TargetUser{
-				{Username: "svc-rdp", Password: "Secret123"},
-				{Username: "admin", Password: "Admin456"},
+				{Username: "svc-rdp"},
+				{Username: "admin"},
 			},
 		},
 	}
@@ -105,10 +105,6 @@ func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 	if resp[0].Users[0].Username != "Administrator" {
 		t.Errorf("expected username 'Administrator', got %q", resp[0].Users[0].Username)
 	}
-	if resp[0].Users[0].Password != "P@ssw0rd!" {
-		t.Errorf("expected password to be included")
-	}
-
 	if len(resp[1].Users) != 2 {
 		t.Fatalf("expected 2 users for ws-01, got %d", len(resp[1].Users))
 	}

@@ -16,7 +16,7 @@ import (
 func newTestManager(t *testing.T) (*Manager, func()) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	config := ManagerConfig{
@@ -119,7 +119,7 @@ func TestManager_GenerateRDPFile_NotFound(t *testing.T) {
 func TestManager_SessionLimitReached(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33400, 11000) // Only 1 port available
 
 	config := ManagerConfig{
@@ -185,7 +185,7 @@ func TestManager_CreateAndTerminateSession_Integration(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	// Use 'nc -l' as a mock server that listens on a port
@@ -296,7 +296,7 @@ func TestManager_TerminateSession_WithActiveConnections(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	// Use higher port numbers to avoid conflicts with other tests
 	portPool := NewPortPool(34500, 34510, 12000)
 
@@ -491,7 +491,7 @@ func mustNewToken(t *testing.T, ttl time.Duration) *Token {
 
 // TestNewManager_InvalidConfigDir tests that NewManager fails with invalid directories.
 func TestNewManager_InvalidConfigDir(t *testing.T) {
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	// Use a non-existent directory that cannot be created
@@ -522,7 +522,7 @@ func TestNewManager_InvalidConfigDir(t *testing.T) {
 func TestManager_DefaultTimeouts(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	// Config without timeouts - should use defaults
@@ -561,7 +561,7 @@ func TestManager_DefaultTimeouts(t *testing.T) {
 func TestManager_NilLogger(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	config := ManagerConfig{
@@ -616,7 +616,7 @@ func TestManager_TerminateSession_AlreadyTerminating(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34600, 34610, 12000)
 
 	config := ManagerConfig{
@@ -708,7 +708,7 @@ func TestManager_ListSessions_FilterByUser(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34700, 34710, 12000)
 
 	config := ManagerConfig{
@@ -786,7 +786,7 @@ func TestManager_ListSessions_FilterByUser(t *testing.T) {
 // TestManager_TokenExpiry tests that token expiry is correctly returned.
 func TestManager_TokenExpiry(t *testing.T) {
 	tmpDir := t.TempDir()
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34800, 34810, 12000)
 
 	config := ManagerConfig{
@@ -856,7 +856,7 @@ func TestManager_TokenExpiry(t *testing.T) {
 // TestManager_GenerateRDPFile_InvalidState tests RDP file generation for non-active sessions.
 func TestManager_GenerateRDPFile_InvalidState(t *testing.T) {
 	tmpDir := t.TempDir()
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34900, 34910, 12000)
 
 	config := ManagerConfig{
@@ -972,7 +972,7 @@ func TestManager_Shutdown_WithTimeout(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 	portPool := NewPortPool(35000, 35010, 12000)
 
 	config := ManagerConfig{
@@ -1060,7 +1060,7 @@ func TestManager_ProviderError(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create a mock provider and remove all targets to trigger errors
-	provider := credential.NewMockProvider()
+	provider := credential.NewTestProvider()
 
 	portPool := NewPortPool(35100, 35110, 12000)
 
