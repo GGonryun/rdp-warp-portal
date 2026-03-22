@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/p0-security/rdp-broker/internal/credential"
@@ -117,7 +118,7 @@ func (w *ConfigWriter) WriteConfig(sessionID string, internalPort int, creds *cr
 		TargetPort:      creds.Port,
 		TargetUser:      creds.Username,
 		TargetPassword:  creds.Password,
-		TargetDomain:    creds.Domain,
+		TargetDomain:    credsDomain(creds),
 		CertificateFile: filepath.Join(w.certDir, "server.crt"),
 		PrivateKeyFile:  filepath.Join(w.certDir, "server.key"),
 	}
@@ -159,7 +160,7 @@ func (w *ConfigWriter) GenerateConfigBytes(internalPort int, creds *credential.T
 		TargetPort:      creds.Port,
 		TargetUser:      creds.Username,
 		TargetPassword:  creds.Password,
-		TargetDomain:    creds.Domain,
+		TargetDomain:    credsDomain(creds),
 		CertificateFile: filepath.Join(w.certDir, "server.crt"),
 		PrivateKeyFile:  filepath.Join(w.certDir, "server.key"),
 	}
@@ -181,4 +182,14 @@ type stringBuilder struct {
 func (s *stringBuilder) Write(p []byte) (n int, err error) {
 	*s.buf = append(*s.buf, p...)
 	return len(p), nil
+}
+
+// credsDomain returns the domain for the FreeRDP config. If the username is
+// in UPN format (user@domain), the domain is already embedded in the username
+// and sending it separately causes NLA authentication failures.
+func credsDomain(creds *credential.TargetCredentials) string {
+	if strings.Contains(creds.Username, "@") {
+		return ""
+	}
+	return creds.Domain
 }
