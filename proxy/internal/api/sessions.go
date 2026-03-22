@@ -65,6 +65,7 @@ type SessionResponse struct {
 	SessionID   string  `json:"session_id"`
 	UserID      string  `json:"user_id"`
 	TargetID    string  `json:"target_id"`
+	Username    string  `json:"username"`
 	TargetHost  string  `json:"target_host"`
 	ProxyPort   int     `json:"proxy_port"`
 	State       string  `json:"state"`
@@ -261,6 +262,7 @@ func sessionToResponse(sess *session.Session) SessionResponse {
 		SessionID:  sess.ID,
 		UserID:     sess.UserID,
 		TargetID:   sess.TargetID,
+		Username:   sess.Username,
 		TargetHost: sess.TargetHost,
 		ProxyPort:  sess.ExternalPort,
 		State:      string(sess.State),

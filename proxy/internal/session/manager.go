@@ -38,6 +38,7 @@ type Session struct {
 	ID           string       `json:"session_id"`
 	UserID       string       `json:"user_id"`
 	TargetID     string       `json:"target_id"`
+	Username     string       `json:"username"`              // Windows user account connected as
 	TargetHost   string       `json:"target_host"`
 	ExternalPort int          `json:"proxy_port"`
 	InternalPort int          `json:"-"`
@@ -173,6 +174,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username,
 		ID:           sessionID,
 		UserID:       userID,
 		TargetID:     targetID,
+		Username:     creds.Username,
 		TargetHost:   creds.IP,
 		ExternalPort: externalPort,
 		InternalPort: internalPort,

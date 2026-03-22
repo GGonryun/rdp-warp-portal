@@ -127,10 +127,13 @@ func (h *AccessHandler) revokeAccess(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("access revoked", "email", req.Email, "target_id", req.TargetID, "username", req.Username)
 
-	// Terminate any active sessions for this user on this target.
+	// Terminate only sessions matching the exact (email, target_id, username) tuple.
 	sessions := h.manager.ListSessions(req.Email)
 	for _, s := range sessions {
 		if s.TargetID != req.TargetID {
+			continue
+		}
+		if !strings.EqualFold(s.Username, req.Username) {
 			continue
 		}
 		if s.State == session.StateTerminating || s.State == session.StateTerminated {
@@ -140,6 +143,7 @@ func (h *AccessHandler) revokeAccess(w http.ResponseWriter, r *http.Request) {
 			"session_id", s.ID,
 			"email", req.Email,
 			"target_id", req.TargetID,
+			"username", req.Username,
 		)
 		if err := h.manager.TerminateSession(r.Context(), s.ID); err != nil {
 			slog.Error("failed to terminate session", "session_id", s.ID, "error", err)
