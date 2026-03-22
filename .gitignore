@@ -10,6 +10,10 @@ config.json
 *.rdp
 *.lab
 
+# Junk Files
+.DS_Store
+*.log
+
 # Build artifacts
 broker
 data/
