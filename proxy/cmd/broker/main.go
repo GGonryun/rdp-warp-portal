@@ -50,8 +50,28 @@ func main() {
 		"max_sessions", cfg.MaxConcurrentSessions,
 	)
 
+	// Initialize secrets client (optional — used for resolving secret-backed credentials)
+	var secretClient *secrets.Client
+	if cfg.WIFConfigured() {
+		tokenProvider := secrets.NewTokenProvider(
+			cfg.AzureCredentialURL,
+			cfg.GCPWIFAudience,
+			cfg.GCPServiceAccount,
+			logger,
+		)
+		secretClient = secrets.NewClient(tokenProvider, logger)
+		logger.Info("secrets client initialized (WIF configured)",
+			"azure_credential_url", cfg.AzureCredentialURL,
+			"gcp_service_account", cfg.GCPServiceAccount,
+		)
+	}
+
 	// Initialize credential provider
-	provider, err := newCredentialProvider(cfg, logger)
+	var secretResolver credential.SecretResolver
+	if secretClient != nil {
+		secretResolver = secretClient.AccessSecret
+	}
+	provider, err := newCredentialProvider(cfg, logger, secretResolver)
 	if err != nil {
 		logger.Error("failed to initialize credential provider", "error", err)
 		os.Exit(1)
@@ -132,24 +152,12 @@ func main() {
 	recordingsHandler := api.NewRecordingsHandler(recordingStore)
 	recordingsHandler.RegisterRoutes(router)
 
-	// Initialize secrets handler (optional — requires WIF configuration)
+	// Register secrets handler (reuses secretClient created earlier)
 	var secretsHandler *api.SecretsHandler
-	if cfg.WIFConfigured() {
-		tokenProvider := secrets.NewTokenProvider(
-			cfg.AzureCredentialURL,
-			cfg.GCPWIFAudience,
-			cfg.GCPServiceAccount,
-			logger,
-		)
-		secretClient := secrets.NewClient(tokenProvider, logger)
+	if secretClient != nil {
 		secretsHandler = api.NewSecretsHandler(secretClient, cfg.AzureCredentialURL, cfg.GCPServiceAccount)
-		logger.Info("secrets handler initialized (WIF configured)",
-			"azure_credential_url", cfg.AzureCredentialURL,
-			"gcp_service_account", cfg.GCPServiceAccount,
-		)
 	} else {
 		secretsHandler = api.NewSecretsHandler(nil, cfg.AzureCredentialURL, cfg.GCPServiceAccount)
-		logger.Info("secrets handler registered (WIF not configured)")
 	}
 	secretsHandler.RegisterRoutes(router)
 
@@ -222,24 +230,9 @@ func main() {
 }
 
 // newCredentialProvider creates a credential provider based on configuration.
-func newCredentialProvider(cfg *config.Config, logger *slog.Logger) (credential.CredentialProvider, error) {
-	switch cfg.CredentialProvider {
-	case "mock":
-		logger.Info("using mock credential provider")
-		if cfg.CredentialProviderConfig != "" {
-			return credential.NewMockProviderFromConfig(cfg.CredentialProviderConfig)
-		}
-		return credential.NewMockProvider(), nil
-
-	// Future providers can be registered here:
-	// case "vault":
-	//     return vault.NewVaultProvider(cfg.CredentialProviderConfig)
-	// case "aws":
-	//     return aws.NewSecretsManagerProvider(cfg.CredentialProviderConfig)
-
-	default:
-		return nil, fmt.Errorf("unknown credential provider: %s", cfg.CredentialProvider)
-	}
+func newCredentialProvider(cfg *config.Config, logger *slog.Logger, resolver credential.SecretResolver) (credential.CredentialProvider, error) {
+	logger.Info("using GSM credential provider")
+	return credential.NewGSMProvider(cfg.CredentialProviderConfig, resolver)
 }
 
 // initLogger initializes the structured logger.

@@ -100,6 +100,17 @@ func (c *Client) AccessSecret(ctx context.Context, secretName string) (string, e
 		}
 	}
 
-	c.logger.Debug("secret accessed", "name", secretName, "bytes", len(decoded))
-	return string(decoded), nil
+	value := string(decoded)
+	// Log the resolved version and a preview of the value for debugging.
+	preview := value
+	if len(preview) > 4 {
+		preview = preview[:4] + "***"
+	}
+	c.logger.Info("secret accessed",
+		"name", secretName,
+		"resolved_version", secretResp.Name,
+		"value_length", len(value),
+		"value_preview", preview,
+	)
+	return value, nil
 }

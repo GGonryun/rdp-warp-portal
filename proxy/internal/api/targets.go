@@ -29,7 +29,6 @@ type TargetResponse struct {
 // TargetUser represents a user account available on a target.
 type TargetUser struct {
 	Username string `json:"username"`
-	Password string `json:"password"`
 }
 
 // RegisterRoutes registers the target routes on the router.
@@ -51,7 +50,6 @@ func (h *TargetsHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
 		for _, u := range d.Users {
 			users = append(users, TargetUser{
 				Username: u.Username,
-				Password: u.Password,
 			})
 		}
 		resp = append(resp, TargetResponse{
