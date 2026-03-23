@@ -84,7 +84,8 @@ id := r.PathValue("id")
 	n, err := h.store.AppendChunk(id, r.Body)
 	if err != nil {
 		if errors.Is(err, recording.ErrRecordingNotFound) {
-			writeError(w, http.StatusNotFound, "recording not found")
+			// Silently accept — the session/recording was already terminated.
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -105,7 +106,8 @@ id := r.PathValue("id")
 
 	if err := h.store.AppendEvents(id, events); err != nil {
 		if errors.Is(err, recording.ErrRecordingNotFound) {
-			writeError(w, http.StatusNotFound, "recording not found")
+			// Silently accept — the session/recording was already terminated.
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -120,7 +122,8 @@ id := r.PathValue("id")
 
 	if err := h.store.Finalize(id); err != nil {
 		if errors.Is(err, recording.ErrRecordingNotFound) {
-			writeError(w, http.StatusNotFound, "recording not found")
+			// Silently accept — the session/recording was already terminated.
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
