@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -29,6 +30,7 @@ type Recorder struct {
 	winlog      *WinLogCapture
 	eventBuffer []client.RecordingEvent
 	mu          sync.Mutex
+	gone        bool // true when broker returned 404 for this recording
 	cancel      context.CancelFunc
 	outputDir   string
 }
@@ -156,12 +158,22 @@ func (r *Recorder) Stop() error {
 	// Flush remaining events.
 	r.flushEvents()
 
-	// End recording on the server.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// End recording on the server (skip if already gone).
+	r.mu.Lock()
+	gone := r.gone
+	r.mu.Unlock()
 
-	if err := r.client.EndRecording(ctx, r.recordingID); err != nil {
-		slog.Error("failed to end recording", "error", err)
+	if !gone {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := r.client.EndRecording(ctx, r.recordingID); err != nil {
+			if errors.Is(err, client.ErrRecordingGone) {
+				slog.Warn("recording already gone, skipping end", "recording_id", r.recordingID)
+			} else {
+				slog.Error("failed to end recording", "error", err)
+			}
+		}
 	}
 
 	// Clean up temp directory. Retry briefly in case ffmpeg still holds a file handle.
@@ -186,6 +198,13 @@ func (r *Recorder) Stop() error {
 // handleChunk uploads a video chunk to the server in a background goroutine.
 func (r *Recorder) handleChunk(chunkPath string) {
 	go func() {
+		r.mu.Lock()
+		if r.gone {
+			r.mu.Unlock()
+			return
+		}
+		r.mu.Unlock()
+
 		slog.Info("uploading chunk", "path", chunkPath, "recording_id", r.recordingID)
 
 		f, err := os.Open(chunkPath)
@@ -199,12 +218,25 @@ func (r *Recorder) handleChunk(chunkPath string) {
 		defer cancel()
 
 		if err := r.client.UploadChunk(ctx, r.recordingID, f); err != nil {
+			if errors.Is(err, client.ErrRecordingGone) {
+				slog.Warn("recording gone, stopping chunk uploads", "recording_id", r.recordingID)
+				r.markGone()
+				return
+			}
 			slog.Error("failed to upload chunk", "path", chunkPath, "error", err)
 			return
 		}
 
 		slog.Info("chunk uploaded", "path", chunkPath)
 	}()
+}
+
+// markGone sets the gone flag, indicating the broker no longer has this recording.
+func (r *Recorder) markGone() {
+	r.mu.Lock()
+	r.gone = true
+	r.eventBuffer = nil
+	r.mu.Unlock()
 }
 
 // isAgentProcess returns true if the process is part of the agent itself and should be filtered.
@@ -443,7 +475,7 @@ func (r *Recorder) flushLoop(ctx context.Context) {
 // flushEvents sends all buffered events to the server.
 func (r *Recorder) flushEvents() {
 	r.mu.Lock()
-	if len(r.eventBuffer) == 0 {
+	if r.gone || len(r.eventBuffer) == 0 {
 		r.mu.Unlock()
 		return
 	}
@@ -455,6 +487,11 @@ func (r *Recorder) flushEvents() {
 	defer cancel()
 
 	if err := r.client.SendEvents(ctx, r.recordingID, events); err != nil {
+		if errors.Is(err, client.ErrRecordingGone) {
+			slog.Warn("recording gone, discarding events", "recording_id", r.recordingID, "count", len(events))
+			r.markGone()
+			return
+		}
 		slog.Error("failed to send events", "error", err, "count", len(events))
 		// Put events back in the buffer for retry.
 		r.mu.Lock()

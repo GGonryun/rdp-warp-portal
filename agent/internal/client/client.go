@@ -4,12 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"time"
 )
+
+// ErrRecordingGone is returned when the broker responds with 404 for a
+// recording, indicating the recording has been deleted or the session was
+// terminated. Callers should stop sending data for this recording.
+var ErrRecordingGone = errors.New("recording not found on broker")
 
 // Client is an HTTP client for the proxy recording API.
 type Client struct {
@@ -168,6 +174,9 @@ func (c *Client) UploadChunk(ctx context.Context, recordingID string, data io.Re
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrRecordingGone
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("upload chunk failed with status %d: %s", resp.StatusCode, string(respBody))
@@ -196,6 +205,9 @@ func (c *Client) SendEvents(ctx context.Context, recordingID string, events []Re
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrRecordingGone
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("send events failed with status %d: %s", resp.StatusCode, string(respBody))
@@ -218,6 +230,9 @@ func (c *Client) EndRecording(ctx context.Context, recordingID string) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrRecordingGone
+	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("end recording failed with status %d: %s", resp.StatusCode, string(respBody))
