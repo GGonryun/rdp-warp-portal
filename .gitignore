@@ -12,8 +12,8 @@ config.json
 
 # Junk Files
 .DS_Store
+data/.DS_Store
 *.log
 
 # Build artifacts
 broker
-data/
