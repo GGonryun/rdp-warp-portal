@@ -10,6 +10,10 @@ import (
 type Config struct {
 	ProxyURL     string `json:"proxy_url"`     // e.g. "http://broker:8080"
 	APIKey       string `json:"api_key"`       // Bearer token for broker API auth
+	// TargetID is the proxy destination id (same as P0 permission resource.instanceId).
+	// When set, recordings can be matched on the access request page even if the
+	// Windows computer name differs from the configured target hostname.
+	TargetID     string `json:"target_id"`
 	FfmpegPath   string `json:"ffmpeg_path"`   // path to ffmpeg binary, default "ffmpeg"
 	Framerate    int    `json:"framerate"`     // capture framerate, default 5
 	ChunkSecs    int    `json:"chunk_secs"`    // segment duration seconds, default 30
@@ -56,6 +60,7 @@ func LoadFromEnv() *Config {
 	cfg := &Config{
 		ProxyURL:   os.Getenv("PROXY_URL"),
 		APIKey:     os.Getenv("API_KEY"),
+		TargetID:   os.Getenv("TARGET_ID"),
 		FfmpegPath: os.Getenv("FFMPEG_PATH"),
 	}
 

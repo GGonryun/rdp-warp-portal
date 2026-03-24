@@ -50,6 +50,7 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 	// Create recording on the server.
 	rec, err := r.client.CreateRecording(ctx, client.CreateRecordingRequest{
 		SessionID:     fmt.Sprintf("%d", sessionInfo.ID),
+		TargetID:      r.config.TargetID,
 		TargetName:    hostname,
 		WindowsUser:   sessionInfo.User,
 		ProxyUser:     sessionInfo.User,

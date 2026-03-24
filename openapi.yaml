@@ -481,7 +481,15 @@ paths:
       parameters:
         - name: target
           in: query
-          description: Filter by target name or agent hostname (case-insensitive)
+          description: Filter by configured target hostname or agent OS hostname (case-insensitive)
+          schema:
+            type: string
+        - name: target_id
+          in: query
+          description: >-
+            Filter by stable proxy destination id. When set, matches recordings
+            with the same target_id; legacy recordings without target_id still
+            match if the target hostname filter matches.
           schema:
             type: string
         - name: user
