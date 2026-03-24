@@ -14,6 +14,27 @@ import (
 	"github.com/p0-security/rdp-broker/internal/recording"
 )
 
+// recordingMatchesTargetFilter applies optional target hostname and/or stable
+// proxy destination id. Legacy rows may have an empty target_id; those still
+// match when the hostname filter matches the configured target name.
+func recordingMatchesTargetFilter(rec *recording.Recording, targetName, targetID string) bool {
+	switch {
+	case targetID != "" && rec.TargetID != "":
+		return rec.TargetID == targetID
+	case targetID != "" && rec.TargetID == "":
+		if targetName == "" {
+			return false
+		}
+		return strings.EqualFold(rec.TargetName, targetName) ||
+			strings.EqualFold(rec.AgentHostname, targetName)
+	case targetName != "":
+		return strings.EqualFold(rec.TargetName, targetName) ||
+			strings.EqualFold(rec.AgentHostname, targetName)
+	default:
+		return true
+	}
+}
+
 type RecordingsHandler struct {
 	store *recording.Store
 }
@@ -164,11 +185,12 @@ func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Reques
 
 	q := r.URL.Query()
 
-	// Filter by target name.
-	if target := q.Get("target"); target != "" {
+	targetNameFilter := q.Get("target")
+	targetIDFilter := q.Get("target_id")
+	if targetNameFilter != "" || targetIDFilter != "" {
 		filtered := make([]*recording.Recording, 0)
 		for _, rec := range recordings {
-			if strings.EqualFold(rec.TargetName, target) || strings.EqualFold(rec.AgentHostname, target) {
+			if recordingMatchesTargetFilter(rec, targetNameFilter, targetIDFilter) {
 				filtered = append(filtered, rec)
 			}
 		}
