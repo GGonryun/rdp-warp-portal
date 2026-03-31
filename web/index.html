@@ -1289,11 +1289,12 @@
 
     if (Hls.isSupported()) {
       hlsInstance = new Hls({
-        liveDurationInfinity: true,
         manifestLoadingTimeOut: 10000,
         manifestLoadingMaxRetry: 6,
         levelLoadingTimeOut: 10000,
         fragLoadingMaxRetry: 6,
+        maxBufferLength: 600,
+        maxMaxBufferLength: 600,
         enableWorker: true,
         xhrSetup: function(xhr) {
           const key = getApiKey();

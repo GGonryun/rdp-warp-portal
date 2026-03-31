@@ -25,6 +25,7 @@ type Recording struct {
 	StartedAt     time.Time       `json:"started_at"`
 	EndedAt       *time.Time      `json:"ended_at,omitempty"`
 	DurationSecs  float64         `json:"duration_secs"`
+	ChunkSecs      int             `json:"chunk_secs,omitempty"`
 	ChunkCount     int             `json:"chunk_count"`
 	ChunkDurations []float64      `json:"chunk_durations,omitempty"`
 	TotalBytes     int64           `json:"total_bytes"`

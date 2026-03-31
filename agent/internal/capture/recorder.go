@@ -54,6 +54,7 @@ func (r *Recorder) Start(ctx context.Context, sessionInfo session.SessionInfo) e
 		WindowsUser:   sessionInfo.User,
 		ProxyUser:     sessionInfo.User,
 		AgentHostname: hostname,
+		ChunkSecs:     r.config.ChunkSecs,
 	})
 	if err != nil {
 		return fmt.Errorf("create recording: %w", err)
@@ -380,22 +381,33 @@ func isAgentWinLogEvent(message string) bool {
 	return false
 }
 
-// isAgentScriptBlock returns true if the PowerShell script block is from the agent's
-// winlog polling infrastructure.
-func isAgentScriptBlock(scriptBlock string) bool {
-	lower := strings.ToLower(scriptBlock)
-	// Agent's winlog polling script patterns
-	if strings.Contains(lower, "get-winevent -filterhashtable") {
-		return true
+// isNoisyWinLogProcess returns true if a 4688/4689 process creation/termination event
+// is for a system or agent process that adds noise without security value.
+func isNoisyWinLogProcess(message string) bool {
+	lower := strings.ToLower(message)
+	noisyProcesses := []string{
+		// Windows core / background services
+		"svchost.exe", "wmiprvse.exe", "searchindexer.exe",
+		"runtimebroker.exe", "backgroundtaskhost.exe", "compattelrunner.exe",
+		"diagtrack", "searchprotocolhost.exe", "searchfilterhost.exe",
+		"taskhostw.exe", "conhost.exe", "csrss.exe", "smss.exe",
+		"wininit.exe", "services.exe", "lsass.exe", "spoolsv.exe",
+		"dllhost.exe", "sihost.exe", "ctfmon.exe", "fontdrvhost.exe",
+		"dwm.exe", "audiodg.exe", "systemsettings.exe",
+		"textinputhost.exe", "shellexperiencehost.exe",
+		"startmenuexperiencehost.exe", "windowsinternal",
+		"microsoftedgeupdate.exe", "musnotification.exe",
+		"securityhealthservice.exe", "sgrmbroker.exe",
+		"msdtc.exe", "tiworker.exe", "trustedinstaller.exe",
+		// .NET compilation (triggered by PowerShell Add-Type in our captors)
+		"csc.exe", "cvtres.exe", "vbc.exe",
+		// Agent infrastructure
+		"agent.exe", "p0rtal-agent.exe", "ffmpeg.exe", "icacls.exe",
 	}
-	if strings.Contains(lower, "register-wmievent") {
-		return true
-	}
-	if strings.Contains(lower, "$eventids = @(4624") {
-		return true
-	}
-	if strings.Contains(lower, "$lastcheck = (get-date)") {
-		return true
+	for _, proc := range noisyProcesses {
+		if strings.Contains(lower, proc) {
+			return true
+		}
 	}
 	return false
 }
@@ -421,6 +433,49 @@ func isSystemAccountLogon(eventID int, user string) bool {
 	return false
 }
 
+// isNoisyScriptBlock returns true if a PowerShell 4104 script block is system/agent
+// noise rather than a user-initiated command.
+func isNoisyScriptBlock(scriptBlock string) bool {
+	lower := strings.ToLower(scriptBlock)
+
+	// .NET interop / Add-Type compilation (our captors and system modules)
+	if strings.Contains(lower, "add-type -memberdefinition") || strings.Contains(lower, "[dllimport(") {
+		return true
+	}
+	// Agent's own capture scripts
+	if strings.Contains(lower, "register-wmievent") || strings.Contains(lower, "get-winevent -filterhashtable") {
+		return true
+	}
+	if strings.Contains(lower, "$eventids = @(4624") || strings.Contains(lower, "$lastcheck = (get-date)") {
+		return true
+	}
+	// PowerShell module auto-loading / internal plumbing
+	if strings.Contains(lower, "microsoft.powershell.utility") ||
+		strings.Contains(lower, "microsoft.powershell.management") ||
+		strings.Contains(lower, "microsoft.powershell.security") {
+		return true
+	}
+	// Prompt function and formatting internals
+	if strings.Contains(lower, "function prompt {") || strings.Contains(lower, "out-default") {
+		return true
+	}
+	// Tab completion / readline internals
+	if strings.Contains(lower, "tabexpansion2") || strings.Contains(lower, "commandcompletion") {
+		return true
+	}
+
+	return false
+}
+
+// isAgentParentProcess returns true if the parent process path indicates
+// the child was spawned by the agent (e.g. powershell.exe launched by agent.exe).
+func isAgentParentProcess(parentProcess string) bool {
+	lower := strings.ToLower(parentProcess)
+	return strings.Contains(lower, "agent.exe") ||
+		strings.Contains(lower, "p0rtal-agent") ||
+		strings.Contains(lower, "p0rtal")
+}
+
 // handleWinLogEvent converts a WinLogEvent to a RecordingEvent and buffers it.
 func (r *Recorder) handleWinLogEvent(we WinLogEvent) {
 	if isAgentWinLogEvent(we.Message) {
@@ -429,7 +484,15 @@ func (r *Recorder) handleWinLogEvent(we WinLogEvent) {
 	if isSystemAccountLogon(we.EventID, we.User) {
 		return
 	}
-	if we.ScriptBlock != "" && isAgentScriptBlock(we.ScriptBlock) {
+	if (we.EventID == 4688 || we.EventID == 4689) && isNoisyWinLogProcess(we.Message) {
+		return
+	}
+	// Filter processes spawned by the agent (e.g. powershell.exe launched by agent.exe)
+	if we.EventID == 4688 && isAgentParentProcess(we.ParentProcess) {
+		return
+	}
+	// Filter noisy PowerShell script blocks (system/agent internals)
+	if we.EventID == 4104 && isNoisyScriptBlock(we.ScriptBlock) {
 		return
 	}
 	data := map[string]any{
@@ -441,6 +504,9 @@ func (r *Recorder) handleWinLogEvent(we WinLogEvent) {
 	}
 	if we.User != "" {
 		data["user"] = we.User
+	}
+	if we.ParentProcess != "" {
+		data["parent_process"] = we.ParentProcess
 	}
 	if we.ScriptBlock != "" {
 		data["script_block"] = we.ScriptBlock

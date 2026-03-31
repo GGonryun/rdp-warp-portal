@@ -63,6 +63,7 @@ type CreateRecordingRequest struct {
 	WindowsUser   string `json:"windows_user"`
 	ProxyUser     string `json:"proxy_user"`
 	AgentHostname string `json:"agent_hostname"`
+	ChunkSecs     int    `json:"chunk_secs,omitempty"`
 }
 
 // Recording represents a recording returned by the server.

@@ -341,7 +341,7 @@ func (s *Store) ChunkPath(id string, chunkIndex int) string {
 // GeneratePlaylist returns an HLS .m3u8 playlist for the recording.
 // For live (still recording) sessions, it includes EXT-X-TARGETDURATION
 // but omits EXT-X-ENDLIST so players keep polling for new segments.
-func (s *Store) GeneratePlaylist(id string, chunkSecs int) ([]byte, error) {
+func (s *Store) GeneratePlaylist(id string) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -350,6 +350,8 @@ func (s *Store) GeneratePlaylist(id string, chunkSecs int) ([]byte, error) {
 		return nil, err
 	}
 
+	// Use the chunk duration the agent reported; fall back to 30 for old recordings.
+	chunkSecs := rec.ChunkSecs
 	if chunkSecs <= 0 {
 		chunkSecs = 30
 	}

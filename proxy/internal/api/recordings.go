@@ -11,16 +11,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/p0-security/rdp-broker/internal/credential"
 	"github.com/p0-security/rdp-broker/internal/recording"
 )
 
 type RecordingsHandler struct {
-	store *recording.Store
+	store    *recording.Store
+	provider credential.CredentialProvider
 }
 
-func NewRecordingsHandler(store *recording.Store) *RecordingsHandler {
+func NewRecordingsHandler(store *recording.Store, provider credential.CredentialProvider) *RecordingsHandler {
 	return &RecordingsHandler{
-		store: store,
+		store:    store,
+		provider: provider,
 	}
 }
 
@@ -47,6 +50,7 @@ type CreateRecordingRequest struct {
 	WindowsUser   string `json:"windows_user"`
 	ProxyUser     string `json:"proxy_user"`
 	AgentHostname string `json:"agent_hostname"`
+	ChunkSecs     int    `json:"chunk_secs,omitempty"`
 }
 
 func (h *RecordingsHandler) createRecording(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +72,7 @@ var req CreateRecordingRequest
 		AgentHostname: req.AgentHostname,
 		Status:        recording.StatusRecording,
 		StartedAt:     time.Now(),
+		ChunkSecs:     req.ChunkSecs,
 	}
 
 	if err := h.store.Create(rec); err != nil {
@@ -166,9 +171,10 @@ func (h *RecordingsHandler) listRecordings(w http.ResponseWriter, r *http.Reques
 
 	// Filter by target name.
 	if target := q.Get("target"); target != "" {
+		targetLower := strings.ToLower(target)
 		filtered := make([]*recording.Recording, 0)
 		for _, rec := range recordings {
-			if strings.EqualFold(rec.TargetName, target) || strings.EqualFold(rec.AgentHostname, target) {
+			if strings.HasPrefix(strings.ToLower(rec.TargetName), targetLower) || strings.HasPrefix(strings.ToLower(rec.AgentHostname), targetLower) {
 				filtered = append(filtered, rec)
 			}
 		}
@@ -295,7 +301,7 @@ func (h *RecordingsHandler) getEvents(w http.ResponseWriter, r *http.Request) {
 func (h *RecordingsHandler) hlsPlaylist(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	playlist, err := h.store.GeneratePlaylist(id, 30)
+	playlist, err := h.store.GeneratePlaylist(id)
 	if err != nil {
 		if errors.Is(err, recording.ErrRecordingNotFound) {
 			writeError(w, http.StatusNotFound, "recording not found")

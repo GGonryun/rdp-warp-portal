@@ -10,14 +10,15 @@ import (
 
 // WinLogEvent represents a captured Windows Event Log entry.
 type WinLogEvent struct {
-	Timestamp   time.Time
-	EventID     int
-	Log         string
-	Source      string
-	Message     string
-	User        string
-	Level       string
-	ScriptBlock string
+	Timestamp     time.Time
+	EventID       int
+	Log           string
+	Source        string
+	Message       string
+	User          string
+	Level         string
+	ScriptBlock   string
+	ParentProcess string
 }
 
 // WinLogCapture captures Windows Event Log entries.

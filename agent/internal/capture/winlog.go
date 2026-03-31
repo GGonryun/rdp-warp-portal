@@ -37,17 +37,13 @@ import (
 //     4947  - Firewall rule modified
 //     4948  - Firewall rule deleted
 //   System:
-//     7036  - Service entered running/stopped state
-//     7040  - Service start type changed
 //     7045  - New service installed
-//   Microsoft-Windows-PowerShell/Operational:
-//     4104  - PowerShell script block logging
 
 const winlogScript = `
 $lastCheck = (Get-Date).AddSeconds(-5)
-# Security events — high-value only. Process create/terminate (4688/4689) excluded
-# since they are captured separately by WMI and generate too much noise here.
-$eventIds = @(4624,4625,4634,4647,4648,4672,4698,4699,4702,4720,4722,4725,4726,4732,4733,4740,4756,4946,4947,4948)
+# Security events — high-value audit events including process creation (4688/4689)
+# which provide command-line and user context beyond what WMI captures.
+$eventIds = @(4624,4625,4634,4647,4648,4672,4688,4689,4698,4699,4702,4720,4722,4725,4726,4732,4733,4740,4756,4946,4947,4948)
 $sysEventIds = @(7045)
 $psEventIds = @(4104)
 
@@ -58,13 +54,18 @@ while ($true) {
         # Security events
         $secEvents = Get-WinEvent -FilterHashtable @{LogName='Security';ID=$eventIds;StartTime=$lastCheck} -ErrorAction SilentlyContinue
         foreach ($e in $secEvents) {
-            # For 4688/4689 events, extract the process name from Properties
+            # For 4688 events, extract the new process name and parent process name
             $procName = ''
-            if ($e.Id -eq 4688 -and $e.Properties.Count -ge 6) { $procName = $e.Properties[5].Value }
-            if ($e.Id -eq 4689 -and $e.Properties.Count -ge 6) { $procName = $e.Properties[5].Value }
+            $parentProc = ''
+            if ($e.Id -eq 4688 -and $e.Properties.Count -ge 14) {
+                $procName = $e.Properties[5].Value
+                $parentProc = $e.Properties[13].Value
+            } elseif ($e.Id -eq 4689 -and $e.Properties.Count -ge 6) {
+                $procName = $e.Properties[5].Value
+            }
             $msg = $e.Message.Split([Environment]::NewLine)[0]
             if ($procName) { $msg = "[$procName] $msg" }
-            @{
+            $obj = @{
                 ts = $e.TimeCreated.ToString('o')
                 type = 'winlog'
                 event_id = $e.Id
@@ -73,7 +74,9 @@ while ($true) {
                 message = $msg
                 user = if ($e.Properties.Count -ge 6) { $e.Properties[5].Value } else { '' }
                 level = $e.LevelDisplayName
-            } | ConvertTo-Json -Compress
+            }
+            if ($parentProc) { $obj['parent_process'] = $parentProc }
+            $obj | ConvertTo-Json -Compress
         }
 
         # System events (service changes)
@@ -90,10 +93,11 @@ while ($true) {
             } | ConvertTo-Json -Compress
         }
 
-        # PowerShell script block logging
+        # PowerShell script block logging (4104) — user commands
         $psEvents = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-PowerShell/Operational';ID=$psEventIds;StartTime=$lastCheck} -ErrorAction SilentlyContinue
         foreach ($e in $psEvents) {
             $scriptBlock = if ($e.Properties.Count -ge 3) { $e.Properties[2].Value } else { '' }
+            if (-not $scriptBlock) { continue }
             if ($scriptBlock.Length -gt 500) { $scriptBlock = $scriptBlock.Substring(0,500) + '...' }
             @{
                 ts = $e.TimeCreated.ToString('o')
@@ -106,6 +110,7 @@ while ($true) {
                 level = $e.LevelDisplayName
             } | ConvertTo-Json -Compress
         }
+
     } catch {}
     $lastCheck = $now
 }
@@ -113,27 +118,29 @@ while ($true) {
 
 // WinLogEvent represents a captured Windows Event Log entry.
 type WinLogEvent struct {
-	Timestamp   time.Time
-	EventID     int
-	Log         string
-	Source      string
-	Message     string
-	User        string
-	Level       string
-	ScriptBlock string
+	Timestamp     time.Time
+	EventID       int
+	Log           string
+	Source        string
+	Message       string
+	User          string
+	Level         string
+	ScriptBlock   string
+	ParentProcess string
 }
 
 // winlogEventJSON is the JSON structure output by the PowerShell script.
 type winlogEventJSON struct {
-	Timestamp   string `json:"ts"`
-	Type        string `json:"type"`
-	EventID     int    `json:"event_id"`
-	Log         string `json:"log"`
-	Source      string `json:"source"`
-	Message     string `json:"message"`
-	User        string `json:"user"`
-	Level       string `json:"level"`
-	ScriptBlock string `json:"script_block"`
+	Timestamp     string `json:"ts"`
+	Type          string `json:"type"`
+	EventID       int    `json:"event_id"`
+	Log           string `json:"log"`
+	Source        string `json:"source"`
+	Message       string `json:"message"`
+	User          string `json:"user"`
+	Level         string `json:"level"`
+	ScriptBlock   string `json:"script_block"`
+	ParentProcess string `json:"parent_process"`
 }
 
 // WinLogCapture captures Windows Event Log entries via PowerShell.
@@ -188,14 +195,15 @@ func (w *WinLogCapture) Start(ctx context.Context) error {
 			}
 
 			we := WinLogEvent{
-				Timestamp:   ts,
-				EventID:     evt.EventID,
-				Log:         evt.Log,
-				Source:      evt.Source,
-				Message:     evt.Message,
-				User:        evt.User,
-				Level:       evt.Level,
-				ScriptBlock: evt.ScriptBlock,
+				Timestamp:     ts,
+				EventID:       evt.EventID,
+				Log:           evt.Log,
+				Source:        evt.Source,
+				Message:       evt.Message,
+				User:          evt.User,
+				Level:         evt.Level,
+				ScriptBlock:   evt.ScriptBlock,
+				ParentProcess: evt.ParentProcess,
 			}
 
 			if w.onEvent != nil {
