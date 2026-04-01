@@ -13,13 +13,13 @@ import (
 
 // testSecrets maps secret names to passwords for testing.
 var testSecrets = map[string]string{
-	"secret/admin-pass":   "P@ssw0rd!",
-	"secret/svc-rdp-pass": "Sup3rS3cret",
-	"secret/rdpadmin":     "CHANGE_ME_BEFORE_DEPLOY",
-	"secret/testpass":     "testpass123",
-	"secret/adminpass":    "adminpass",
-	"secret/newpass":      "newpass",
-	"secret/concurrent":   "pass",
+	"admin-pass":   "P@ssw0rd!",
+	"svc-rdp-pass": "Sup3rS3cret",
+	"rdpadmin":     "CHANGE_ME_BEFORE_DEPLOY",
+	"testpass":     "testpass123",
+	"adminpass":    "adminpass",
+	"newpass":      "newpass",
+	"concurrent":   "pass",
 }
 
 func testResolver(ctx context.Context, secretName string) (string, error) {
@@ -43,7 +43,7 @@ func newTestProvider() *GSMProvider {
 				Port:   3389,
 				Domain: "CORP",
 				Users: []TargetUser{
-					{Username: "Administrator", Secret: "secret/admin-pass"},
+					{Username: "Administrator", Secret: "admin-pass"},
 				},
 			},
 			"ws-05": {
@@ -55,7 +55,7 @@ func newTestProvider() *GSMProvider {
 				Port:   3389,
 				Domain: "CORP",
 				Users: []TargetUser{
-					{Username: "svc-rdp", Secret: "secret/svc-rdp-pass"},
+					{Username: "svc-rdp", Secret: "svc-rdp-pass"},
 				},
 			},
 			"win-vm-1": {
@@ -67,7 +67,7 @@ func newTestProvider() *GSMProvider {
 				Port:   3389,
 				Domain: "",
 				Users: []TargetUser{
-					{Username: "rdpadmin", Secret: "secret/rdpadmin"},
+					{Username: "rdpadmin", Secret: "rdpadmin"},
 				},
 			},
 		},
@@ -313,20 +313,17 @@ func TestNewGSMProvider(t *testing.T) {
       "hostname": "test-srv-01",
       "ip": "192.168.1.100",
       "port": 3390,
-      "domain": "TESTDOMAIN",
-      "users": [
-        {"username": "testuser", "secret": "secret/testpass"},
-        {"username": "admin", "secret": "secret/adminpass"}
-      ]
+      "domain": "TESTDOMAIN"
     },
     "test-srv-02": {
       "hostname": "test-srv-02",
       "ip": "192.168.1.101",
-      "domain": "TESTDOMAIN",
-      "users": [
-        {"username": "admin", "secret": "secret/adminpass"}
-      ]
+      "domain": "TESTDOMAIN"
     }
+  },
+  "users": {
+    "testuser@example.com": {"username": "testuser", "secret": "testpass"},
+    "admin@example.com": {"username": "admin", "secret": "adminpass"}
   }
 }`
 
@@ -452,7 +449,7 @@ func TestAddTarget(t *testing.T) {
 		IP:       "192.168.2.100",
 	}
 	users := []TargetUser{
-		{Username: "newuser", Secret: "secret/newpass"},
+		{Username: "newuser", Secret: "newpass"},
 	}
 
 	provider.AddTarget("new-target", info, 3389, "NEWDOMAIN", users)

@@ -111,6 +111,14 @@ type CredentialProvider interface {
 	// - (nil, error) on failure
 	ListDestinations(ctx context.Context) ([]TargetDestination, error)
 
+	// ResolveUsername maps a user identity (email) to the Windows username
+	// that should be used for RDP connections on the given target.
+	//
+	// Returns:
+	// - (username, nil) on success
+	// - ("", ErrUserNotFound) if no mapping exists for this identity
+	ResolveUsername(ctx context.Context, email string) (string, error)
+
 	// Close releases any resources held by the provider.
 	//
 	// Called during broker shutdown. After Close returns, no other methods
@@ -126,6 +134,9 @@ type CredentialProvider interface {
 // TargetCredentials contains the full credentials needed to connect to a
 // target machine via RDP. This struct is NEVER exposed via the API.
 type TargetCredentials struct {
+	// Hostname is the target machine's hostname (e.g., "mike-rdp").
+	Hostname string `json:"hostname"`
+
 	// IP is the target machine's IP address or DNS name.
 	IP string `json:"ip"`
 
@@ -156,6 +167,9 @@ type TargetInfo struct {
 
 	// IP is the target machine's IP address or DNS name.
 	IP string `json:"ip"`
+
+	// Domain is the Windows domain (e.g., "P0LAB"). May be empty for standalone machines.
+	Domain string `json:"domain,omitempty"`
 }
 
 // TargetUser represents a user account available on a target machine.

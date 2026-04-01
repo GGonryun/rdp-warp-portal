@@ -11,19 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p0-security/rdp-broker/internal/credential"
 	"github.com/p0-security/rdp-broker/internal/recording"
 )
 
 type RecordingsHandler struct {
-	store    *recording.Store
-	provider credential.CredentialProvider
+	store *recording.Store
 }
 
-func NewRecordingsHandler(store *recording.Store, provider credential.CredentialProvider) *RecordingsHandler {
+func NewRecordingsHandler(store *recording.Store) *RecordingsHandler {
 	return &RecordingsHandler{
-		store:    store,
-		provider: provider,
+		store: store,
 	}
 }
 
@@ -54,7 +51,7 @@ type CreateRecordingRequest struct {
 }
 
 func (h *RecordingsHandler) createRecording(w http.ResponseWriter, r *http.Request) {
-var req CreateRecordingRequest
+	var req CreateRecordingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -84,7 +81,7 @@ var req CreateRecordingRequest
 }
 
 func (h *RecordingsHandler) uploadChunk(w http.ResponseWriter, r *http.Request) {
-id := r.PathValue("id")
+	id := r.PathValue("id")
 
 	n, err := h.store.AppendChunk(id, r.Body)
 	if err != nil {
@@ -100,7 +97,7 @@ id := r.PathValue("id")
 }
 
 func (h *RecordingsHandler) sendEvents(w http.ResponseWriter, r *http.Request) {
-id := r.PathValue("id")
+	id := r.PathValue("id")
 
 	var events []recording.RecordingEvent
 	if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
@@ -121,7 +118,7 @@ id := r.PathValue("id")
 }
 
 func (h *RecordingsHandler) endRecording(w http.ResponseWriter, r *http.Request) {
-id := r.PathValue("id")
+	id := r.PathValue("id")
 
 	if err := h.store.Finalize(id); err != nil {
 		if errors.Is(err, recording.ErrRecordingNotFound) {

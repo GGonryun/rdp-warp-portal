@@ -12,8 +12,8 @@ services:
       - AZURE_CREDENTIAL_URL=${AZURE_CREDENTIAL_URL}
       - GCP_WIF_AUDIENCE=${GCP_WIF_AUDIENCE}
       - GCP_SERVICE_ACCOUNT=${GCP_SERVICE_ACCOUNT}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
     volumes:
-      - ./proxy/targets.json:/etc/rdp-broker/targets.json:ro
       - ./web:/usr/share/p0rtal/web:ro
       - ./data/recordings:/var/lib/p0rtal/recordings
     restart: unless-stopped

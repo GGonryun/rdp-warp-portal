@@ -9,14 +9,14 @@ import (
 )
 
 func TestNewRouter(t *testing.T) {
-	router := NewRouter("test-key", nil)
+	router := NewRouter("test-key", nil, nil)
 	if router == nil {
 		t.Fatal("NewRouter returned nil")
 	}
 }
 
 func TestRouter_NoAuth_NonAPIPath(t *testing.T) {
-	router := NewRouter("test-key", nil)
+	router := NewRouter("test-key", nil, nil)
 
 	called := false
 	router.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func TestRouter_NoAuth_NonAPIPath(t *testing.T) {
 
 func TestRouter_APIPath_NoKey_Configured_Passes(t *testing.T) {
 	// When no API key is configured, all requests pass through
-	router := NewRouter("", nil)
+	router := NewRouter("", nil, nil)
 
 	called := false
 	router.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +59,7 @@ func TestRouter_APIPath_NoKey_Configured_Passes(t *testing.T) {
 }
 
 func TestRouter_APIPath_MissingAuthHeader(t *testing.T) {
-	router := NewRouter("test-key", nil)
+	router := NewRouter("test-key", nil, nil)
 
 	router.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -75,7 +75,7 @@ func TestRouter_APIPath_MissingAuthHeader(t *testing.T) {
 }
 
 func TestRouter_APIPath_InvalidFormat(t *testing.T) {
-	router := NewRouter("test-key", nil)
+	router := NewRouter("test-key", nil, nil)
 
 	router.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -92,7 +92,7 @@ func TestRouter_APIPath_InvalidFormat(t *testing.T) {
 }
 
 func TestRouter_APIPath_WrongKey(t *testing.T) {
-	router := NewRouter("correct-key", nil)
+	router := NewRouter("correct-key", nil, nil)
 
 	router.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -109,7 +109,7 @@ func TestRouter_APIPath_WrongKey(t *testing.T) {
 }
 
 func TestRouter_APIPath_ValidKey(t *testing.T) {
-	router := NewRouter("test-key", nil)
+	router := NewRouter("test-key", nil, nil)
 
 	called := false
 	router.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {

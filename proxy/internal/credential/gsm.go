@@ -33,6 +33,7 @@ var ErrSecretResolverNotConfigured = errors.New("secret resolver not configured"
 type GSMProvider struct {
 	mu            sync.RWMutex
 	targets       map[string]gsmTarget
+	users         map[string]gsmConfigUser // normalised email → user mapping
 	resolveSecret SecretResolver
 }
 
@@ -43,9 +44,9 @@ var _ CredentialProvider = (*GSMProvider)(nil)
 // The resolver returns fixed passwords for known secret names.
 func NewTestProvider() *GSMProvider {
 	secrets := map[string]string{
-		"secret/admin-pass":   "P@ssw0rd!",
-		"secret/svc-rdp-pass": "Sup3rS3cret",
-		"secret/rdpadmin":     "CHANGE_ME_BEFORE_DEPLOY",
+		"admin-pass":   "P@ssw0rd!",
+		"svc-rdp-pass": "Sup3rS3cret",
+		"rdpadmin":     "CHANGE_ME_BEFORE_DEPLOY",
 	}
 	resolver := func(_ context.Context, name string) (string, error) {
 		if v, ok := secrets[name]; ok {
@@ -56,63 +57,78 @@ func NewTestProvider() *GSMProvider {
 
 	return &GSMProvider{
 		resolveSecret: resolver,
+		users: map[string]gsmConfigUser{
+			"admin@example.com":    {Username: "Administrator", Secret: "admin-pass"},
+			"svc@example.com":      {Username: "svc-rdp", Secret: "svc-rdp-pass"},
+			"rdpadmin@example.com": {Username: "rdpadmin", Secret: "rdpadmin"},
+		},
 		targets: map[string]gsmTarget{
 			"dc-01": {
 				Info:   TargetInfo{ID: "dc-01", Hostname: "dc-01", IP: "10.0.1.10"},
 				Port:   3389,
 				Domain: "CORP",
-				Users:  []TargetUser{{Username: "Administrator", Secret: "secret/admin-pass"}},
+				Users:  []TargetUser{{Username: "Administrator", Secret: "admin-pass"}},
 			},
 			"ws-05": {
 				Info:   TargetInfo{ID: "ws-05", Hostname: "ws-05", IP: "10.0.1.50"},
 				Port:   3389,
 				Domain: "CORP",
-				Users:  []TargetUser{{Username: "svc-rdp", Secret: "secret/svc-rdp-pass"}},
+				Users:  []TargetUser{{Username: "svc-rdp", Secret: "svc-rdp-pass"}},
 			},
 			"win-vm-1": {
 				Info:   TargetInfo{ID: "win-vm-1", Hostname: "win-vm-1", IP: "20.64.171.136"},
 				Port:   3389,
 				Domain: "",
-				Users:  []TargetUser{{Username: "rdpadmin", Secret: "secret/rdpadmin"}},
+				Users:  []TargetUser{{Username: "rdpadmin", Secret: "rdpadmin"}},
 			},
 		},
 	}
 }
 
 // gsmConfigFile represents the JSON structure of the config file.
-type gsmConfigFile struct {
-	Targets map[string]gsmConfigTarget `json:"targets"`
-}
-
-// gsmConfigTarget represents a single target in the config file.
-type gsmConfigTarget struct {
-	Hostname string       `json:"hostname"`
-	IP       string       `json:"ip"`
-	Port     int          `json:"port"`
-	Domain   string       `json:"domain"`
-	Users    []TargetUser `json:"users"`
-}
-
-// NewGSMProvider creates a GSMProvider from a JSON configuration file.
 //
-// The configuration file should have the following format:
+// Targets and users are specified separately:
 //
 //	{
 //	  "targets": {
 //	    "domain-controller": {
-//	      "hostname": "domain-controll",
+//	      "hostname": "dc-01",
 //	      "ip": "10.1.0.5",
 //	      "port": 3389,
-//	      "domain": "P0LAB",
-//	      "users": [
-//	        {
-//	          "username": "golden.marmot@p0lab1.internal",
-//	          "secret": "projects/233195464130/secrets/my-secret"
-//	        }
-//	      ]
+//	      "domain": "P0LAB"
+//	    }
+//	  },
+//	  "users": {
+//	    "miguel.campos@p0.dev": {
+//	      "username": "rdpadmin",
+//	      "secret": "p0_windows_domain_rdpadmin"
+//	    },
+//	    "alice@p0.dev": {
+//	      "username": "administrator@p0lab1.internal",
+//	      "secret": "p0_windows_domain_administrator"
 //	    }
 //	  }
 //	}
+type gsmConfigFile struct {
+	Targets map[string]gsmConfigTarget `json:"targets"`
+	Users   map[string]gsmConfigUser   `json:"users"`
+}
+
+// gsmConfigTarget represents a single machine in the config file.
+type gsmConfigTarget struct {
+	Hostname string `json:"hostname"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	Domain   string `json:"domain"`
+}
+
+// gsmConfigUser maps an identity (email) to a Windows username and secret.
+type gsmConfigUser struct {
+	Username string `json:"username"`
+	Secret   string `json:"secret"`
+}
+
+// NewGSMProvider creates a GSMProvider from a JSON configuration file.
 //
 // Returns an error if the file cannot be read or parsed.
 func NewGSMProvider(path string, resolver SecretResolver) (*GSMProvider, error) {
@@ -133,20 +149,35 @@ func NewGSMProvider(path string, resolver SecretResolver) (*GSMProvider, error) 
 			port = 3389
 		}
 
+		// Build the user list from the users map — any user can connect to
+		// any target. The ACL layer (not the config) controls who can access what.
+		var users []TargetUser
+		for _, u := range config.Users {
+			users = append(users, TargetUser{Username: u.Username, Secret: u.Secret})
+		}
+
 		targets[id] = gsmTarget{
 			Info: TargetInfo{
 				ID:       id,
 				Hostname: t.Hostname,
 				IP:       t.IP,
+				Domain:   t.Domain,
 			},
 			Port:   port,
 			Domain: t.Domain,
-			Users:  t.Users,
+			Users:  users,
 		}
+	}
+
+	// Build normalised user map.
+	userMap := make(map[string]gsmConfigUser, len(config.Users))
+	for email, u := range config.Users {
+		userMap[strings.ToLower(email)] = u
 	}
 
 	return &GSMProvider{
 		targets:       targets,
+		users:         userMap,
 		resolveSecret: resolver,
 	}, nil
 }
@@ -261,6 +292,18 @@ func (p *GSMProvider) ListDestinations(ctx context.Context) ([]TargetDestination
 	}
 
 	return destinations, nil
+}
+
+// ResolveUsername maps a user identity (email) to the Windows username for RDP.
+func (p *GSMProvider) ResolveUsername(_ context.Context, email string) (string, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	u, ok := p.users[strings.ToLower(email)]
+	if !ok {
+		return "", ErrUserNotFound
+	}
+	return u.Username, nil
 }
 
 // Close releases resources held by the provider.

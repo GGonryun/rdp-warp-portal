@@ -530,60 +530,32 @@
   <button class="active" data-tab="sessions" onclick="switchTab('sessions')">Sessions</button>
   <button data-tab="recordings" onclick="switchTab('recordings')">Recordings</button>
   <button data-tab="access" onclick="switchTab('access')">Access Control</button>
+  <button data-tab="publickeys" onclick="switchTab('publickeys')">Public Keys</button>
   <button data-tab="secrets" onclick="switchTab('secrets')">Secrets</button>
 </div>
 
 <div id="tab-sessions" class="tab-content active">
-  <div class="grid">
-    <!-- Left panel: Create session -->
-    <div>
-      <div class="card" style="margin-bottom: 1.5rem;">
-        <h2>Broker Status</h2>
-        <div class="stats">
-          <div class="stat">
-            <div class="stat-value" id="stat-sessions">—</div>
-            <div class="stat-label">Active Sessions</div>
-          </div>
-          <div class="stat">
-            <div class="stat-value" id="stat-ports">—</div>
-            <div class="stat-label">Available Ports</div>
-          </div>
-        </div>
+  <div class="card" style="margin-bottom: 1.5rem;">
+    <h2>Broker Status</h2>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="stat-sessions">—</div>
+        <div class="stat-label">Active Sessions</div>
       </div>
-
-      <div class="card">
-        <h2>Create Session</h2>
-        <div class="form-group">
-          <label for="user-id">User ID</label>
-          <input type="text" id="user-id" value="tester" placeholder="e.g. tester">
-        </div>
-        <div class="form-group">
-          <label for="target-select">Target</label>
-          <select id="target-select" onchange="onTargetChange()">
-            <option value="">Loading destinations...</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label for="username-select">Login As</label>
-          <select id="username-select">
-            <option value="">Select a target first</option>
-          </select>
-        </div>
-        <button class="btn-primary" id="create-btn" onclick="createSession()">
-          Create Session
-        </button>
+      <div class="stat">
+        <div class="stat-value" id="stat-ports">—</div>
+        <div class="stat-label">Available Ports</div>
       </div>
     </div>
+  </div>
 
-    <!-- Right panel: Sessions table -->
-    <div class="card">
-      <div class="sessions-header">
-        <h2>Sessions</h2>
-        <button class="btn-sm btn-refresh" onclick="loadSessions()">Refresh</button>
-      </div>
-      <div id="sessions-container">
-        <div class="empty-state">No sessions yet. Create one to get started.</div>
-      </div>
+  <div class="card">
+    <div class="sessions-header">
+      <h2>Sessions</h2>
+      <button class="btn-sm btn-refresh" onclick="loadSessions()">Refresh</button>
+    </div>
+    <div id="sessions-container">
+      <div class="empty-state">No active sessions.</div>
     </div>
   </div>
 </div>
@@ -647,23 +619,20 @@
       <h2>Access Control</h2>
       <button class="btn-sm btn-refresh" onclick="loadAccess()">Refresh</button>
     </div>
-    <div style="margin-bottom:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:flex-end;">
-      <div>
-        <label style="font-size:0.75rem;color:var(--muted);">Email</label>
-        <input id="grant-email" placeholder="user@example.com" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:200px;" />
-      </div>
-      <div>
-        <label style="font-size:0.75rem;color:var(--muted);">Target ID</label>
-        <input id="grant-target" placeholder="dc-01" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:140px;" />
-      </div>
-      <div>
-        <label style="font-size:0.75rem;color:var(--muted);">Username</label>
-        <input id="grant-username" placeholder="rdpadmin" style="display:block;padding:0.35rem 0.6rem;font-size:0.85rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);width:140px;" />
-      </div>
-      <button class="btn btn-primary" onclick="grantAccess()" style="height:fit-content;">Grant</button>
-    </div>
     <div id="access-container">
       <div class="empty-state">No access grants found.</div>
+    </div>
+  </div>
+</div>
+
+<div id="tab-publickeys" class="tab-content">
+  <div class="card">
+    <div class="sessions-header">
+      <h2>Public Keys</h2>
+      <button class="btn-sm btn-refresh" onclick="loadPublicKeys()">Refresh</button>
+    </div>
+    <div id="publickeys-container">
+      <div class="empty-state">No public keys registered.</div>
     </div>
   </div>
 </div>
@@ -678,8 +647,8 @@
       <div class="card">
         <h2>Read Secret</h2>
         <div class="form-group">
-          <label for="secret-name">Secret Resource Name</label>
-          <input type="text" id="secret-name" placeholder="projects/PROJECT/secrets/SECRET_NAME">
+          <label for="secret-name">Secret Name</label>
+          <input type="text" id="secret-name" placeholder="my_secret_name">
         </div>
         <button class="btn-primary" id="read-secret-btn" onclick="readSecret()">Read Secret</button>
       </div>
@@ -687,6 +656,21 @@
     <div class="card">
       <h2>Result</h2>
       <div id="secret-result" class="empty-state">Enter a secret name and click Read Secret.</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="public-key-modal" onclick="closePublicKeyModal(event)">
+  <div class="modal" style="max-width:600px;">
+    <div class="modal-header">
+      <h3 id="public-key-modal-title">Public Key</h3>
+      <button class="modal-close" onclick="closePublicKeyModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <pre id="public-key-modal-body" style="background:var(--bg);padding:1rem;border-radius:6px;font-size:0.8rem;white-space:pre-wrap;word-break:break-all;margin:0;"></pre>
+      <div style="margin-top:0.75rem;text-align:right;">
+        <button class="btn-sm btn-info" onclick="copyPublicKey()">Copy</button>
+      </div>
     </div>
   </div>
 </div>
@@ -782,50 +766,6 @@
   }
 
   // Load targets (with users)
-  let destinations = [];
-
-  async function loadDestinations() {
-    try {
-      const resp = await apiFetch(API + '/api/targets');
-      destinations = await resp.json();
-      const select = document.getElementById('target-select');
-      select.innerHTML = '';
-      if (destinations.length === 0) {
-        select.innerHTML = '<option value="">No destinations configured</option>';
-        return;
-      }
-      destinations.forEach(d => {
-        const opt = document.createElement('option');
-        opt.value = d.id;
-        opt.textContent = d.hostname + ' (' + d.ip + ')';
-        select.appendChild(opt);
-      });
-      onTargetChange();
-    } catch (e) {
-      document.getElementById('target-select').innerHTML =
-        '<option value="">Failed to load destinations</option>';
-    }
-  }
-
-  function onTargetChange() {
-    const targetId = document.getElementById('target-select').value;
-    const usernameSelect = document.getElementById('username-select');
-    usernameSelect.innerHTML = '';
-
-    const dest = destinations.find(d => d.id === targetId);
-    if (!dest || !dest.users || dest.users.length === 0) {
-      usernameSelect.innerHTML = '<option value="">No users available</option>';
-      return;
-    }
-
-    dest.users.forEach(u => {
-      const opt = document.createElement('option');
-      opt.value = u.username;
-      opt.textContent = u.username;
-      usernameSelect.appendChild(opt);
-    });
-  }
-
   // List sessions
   async function loadSessions() {
     try {
@@ -834,7 +774,7 @@
       const container = document.getElementById('sessions-container');
 
       if (!sessions || sessions.length === 0) {
-        container.innerHTML = '<div class="empty-state">No sessions yet. Create one to get started.</div>';
+        container.innerHTML = '<div class="empty-state">No active sessions.</div>';
         return;
       }
 
@@ -881,50 +821,6 @@
     }
 
     checkHealth();
-  }
-
-  // Create session
-  async function createSession() {
-    const targetId = document.getElementById('target-select').value;
-    const username = document.getElementById('username-select').value;
-    if (!targetId) {
-      toast('Select a target first', 'error');
-      return;
-    }
-    if (!username) {
-      toast('Select a username first', 'error');
-      return;
-    }
-
-    const btn = document.getElementById('create-btn');
-    btn.disabled = true;
-    btn.textContent = 'Creating...';
-
-    try {
-      const resp = await apiFetch(API + '/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          target_id: targetId,
-          username: username,
-          user_id: getUserId()
-        })
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json();
-        throw new Error(err.message || 'Failed to create session');
-      }
-
-      const data = await resp.json();
-      toast('Session created: ' + shortId(data.session_id));
-      loadSessions();
-    } catch (e) {
-      toast(e.message, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Create Session';
-    }
   }
 
   // Download RDP file
@@ -999,6 +895,9 @@
     }
     if (tab === 'access') {
       loadAccess();
+    }
+    if (tab === 'publickeys') {
+      loadPublicKeys();
     }
     if (tab === 'secrets') {
       loadSecretsStatus();
@@ -1196,18 +1095,20 @@
       let html = `<table>
         <thead><tr>
           <th>Email</th>
-          <th>Target</th>
+          <th>Hostname</th>
+          <th>IP</th>
           <th>Username</th>
           <th>Actions</th>
         </tr></thead><tbody>`;
 
       entries.forEach(e => {
         html += `<tr>
-          <td>${e.email}</td>
-          <td class="mono">${e.target_id}</td>
-          <td>${e.username}</td>
+          <td>${e.user.email}</td>
+          <td class="mono">${e.host.hostname}</td>
+          <td class="mono">${e.host.ip}</td>
+          <td>${e.user.username}</td>
           <td class="actions">
-            <button class="btn-sm btn-danger" onclick="revokeAccess('${e.email}', '${e.target_id}', '${e.username}')">Revoke</button>
+            <button class="btn-sm btn-danger" onclick="revokeAccess('${e.user.email}', '${e.host.hostname}')">Revoke</button>
           </td>
         </tr>`;
       });
@@ -1219,42 +1120,13 @@
     }
   }
 
-  async function grantAccess() {
-    const email = document.getElementById('grant-email').value.trim();
-    const targetId = document.getElementById('grant-target').value.trim();
-    const username = document.getElementById('grant-username').value.trim();
-    if (!email || !targetId || !username) {
-      toast('All fields are required', 'error');
-      return;
-    }
-    try {
-      const resp = await apiFetch(API + '/api/grant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, target_id: targetId, username })
-      });
-      if (resp.ok) {
-        toast('Access granted to ' + email);
-        document.getElementById('grant-email').value = '';
-        document.getElementById('grant-target').value = '';
-        document.getElementById('grant-username').value = '';
-        loadAccess();
-      } else {
-        const err = await resp.json();
-        toast(err.message || 'Failed to grant access', 'error');
-      }
-    } catch (e) {
-      toast('Failed to grant access', 'error');
-    }
-  }
-
-  async function revokeAccess(email, targetId, username) {
-    if (!confirm('Revoke access for ' + email + ' on ' + targetId + '? Active sessions will be terminated.')) return;
+  async function revokeAccess(email, hostname) {
+    if (!confirm('Revoke access for ' + email + ' on ' + hostname + '? Active sessions will be terminated.')) return;
     try {
       const resp = await apiFetch(API + '/api/revoke', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, target_id: targetId, username })
+        body: JSON.stringify({ email, hostname })
       });
       if (resp.ok) {
         toast('Access revoked for ' + email);
@@ -1265,6 +1137,88 @@
       }
     } catch (e) {
       toast('Failed to revoke access', 'error');
+    }
+  }
+
+  // Public Keys
+  async function loadPublicKeys() {
+    try {
+      const resp = await apiFetch(API + '/api/public-keys');
+      const container = document.getElementById('publickeys-container');
+      if (!resp.ok) {
+        container.innerHTML = '<div class="empty-state">Error loading public keys: ' + resp.status + '</div>';
+        return;
+      }
+      const entries = await resp.json();
+
+      if (!Array.isArray(entries) || entries.length === 0) {
+        container.innerHTML = '<div class="empty-state">No public keys registered.</div>';
+        return;
+      }
+
+      window._pkEntries = entries;
+
+      let html = `<table>
+        <thead><tr>
+          <th>Email</th>
+          <th>Fingerprint</th>
+          <th>Key</th>
+          <th>Actions</th>
+        </tr></thead><tbody>`;
+
+      entries.forEach((e, i) => {
+        html += `<tr>
+          <td>${e.email}</td>
+          <td class="mono" style="font-size:0.75rem;">${e.fingerprint}</td>
+          <td><button class="btn-sm btn-info" onclick="viewPublicKey(${i})">View</button></td>
+          <td class="actions">
+            <button class="btn-sm btn-danger" onclick="deletePublicKey('${e.email}', '${e.fingerprint}')">Delete</button>
+          </td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch (e) {
+      console.error('Failed to load public keys', e);
+    }
+  }
+
+  function viewPublicKey(index) {
+    const entry = window._pkEntries && window._pkEntries[index];
+    if (!entry) return;
+    document.getElementById('public-key-modal-body').textContent = entry.public_key;
+    document.getElementById('public-key-modal-title').textContent = entry.email + ' (' + entry.fingerprint + ')';
+    document.getElementById('public-key-modal').classList.add('show');
+  }
+
+  function closePublicKeyModal(event) {
+    if (event && event.target !== event.currentTarget) return;
+    document.getElementById('public-key-modal').classList.remove('show');
+  }
+
+  function copyPublicKey() {
+    const text = document.getElementById('public-key-modal-body').textContent;
+    navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard'));
+  }
+
+  async function deletePublicKey(email, fingerprint) {
+    if (!confirm('Delete public key ' + fingerprint + ' for ' + email + '?')) return;
+    try {
+      const resp = await apiFetch(API + '/api/public-keys', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, fingerprint })
+      });
+      if (resp.ok) {
+        toast('Public key deleted');
+        loadPublicKeys();
+      } else {
+        const err = await resp.json();
+        toast(err.message || 'Failed to delete public key', 'error');
+      }
+    } catch (e) {
+      toast('Failed to delete public key', 'error');
     }
   }
 

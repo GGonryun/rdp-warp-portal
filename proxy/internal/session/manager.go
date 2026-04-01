@@ -78,7 +78,6 @@ type Manager struct {
 	mu           sync.RWMutex
 	sessions     map[string]*Session
 	history      []*Session // terminated sessions kept for listing
-	provider     credential.CredentialProvider
 	portPool     *PortPool
 	configWriter *ConfigWriter
 	proxyManager *ProxyManager
@@ -90,7 +89,6 @@ type Manager struct {
 
 // NewManager creates a new session manager.
 func NewManager(
-	provider credential.CredentialProvider,
 	portPool *PortPool,
 	config ManagerConfig,
 ) (*Manager, error) {
@@ -113,7 +111,6 @@ func NewManager(
 
 	return &Manager{
 		sessions:     make(map[string]*Session),
-		provider:     provider,
 		portPool:     portPool,
 		configWriter: configWriter,
 		proxyManager: NewProxyManager(config.FreerdpProxyBin),
@@ -122,10 +119,9 @@ func NewManager(
 	}, nil
 }
 
-// CreateSession creates a new RDP session for the given user and target.
-// username specifies which user account to connect as on the target.
+// CreateSession creates a new RDP session using pre-resolved credentials.
 // clientIP is used to restrict RDP connections to the IP that created the session.
-func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username, clientIP string) (*Session, error) {
+func (m *Manager) CreateSession(ctx context.Context, userID string, creds *credential.TargetCredentials, clientIP string) (*Session, error) {
 	m.mu.Lock()
 	if m.shutdown {
 		m.mu.Unlock()
@@ -138,15 +134,6 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username,
 		return nil, ErrSessionLimitReached
 	}
 	m.mu.Unlock()
-
-	// Get credentials from provider
-	creds, err := m.provider.GetTargetCredentials(ctx, targetID, username)
-	if err != nil {
-		if errors.Is(err, credential.ErrTargetNotFound) || errors.Is(err, credential.ErrUserNotFound) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
-	}
 
 	// Allocate port pair
 	externalPort, internalPort, err := m.portPool.Allocate()
@@ -173,7 +160,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username,
 	session := &Session{
 		ID:           sessionID,
 		UserID:       userID,
-		TargetID:     targetID,
+		TargetID:     creds.Hostname,
 		Username:     creds.Username,
 		TargetHost:   creds.IP,
 		ExternalPort: externalPort,
@@ -222,9 +209,10 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username,
 	m.configWriter.DeleteConfig(sessionID)
 
 	// Create token validator
+	hostname := creds.Hostname
 	validateToken := func(tokenValue, target string) error {
 		// Verify target matches
-		if target != targetID {
+		if target != hostname {
 			return ErrTokenMismatch
 		}
 		return session.token.Validate(tokenValue)
@@ -248,7 +236,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username,
 			m.logger.Info("client connected to session",
 				"session_id", sessionID,
 				"user_id", userID,
-				"target_id", targetID,
+				"hostname", hostname,
 			)
 		},
 	})
@@ -276,7 +264,7 @@ func (m *Manager) CreateSession(ctx context.Context, userID, targetID, username,
 	m.logger.Info("session created",
 		"session_id", sessionID,
 		"user_id", userID,
-		"target_id", targetID,
+		"hostname", hostname,
 		"external_port", externalPort,
 		"pid", session.PID,
 	)

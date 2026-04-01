@@ -17,9 +17,9 @@ import (
 
 	"github.com/p0-security/rdp-broker/internal/acl"
 	"github.com/p0-security/rdp-broker/internal/api"
+	"github.com/p0-security/rdp-broker/internal/auth"
 	"github.com/p0-security/rdp-broker/internal/certs"
 	"github.com/p0-security/rdp-broker/internal/config"
-	"github.com/p0-security/rdp-broker/internal/credential"
 	"github.com/p0-security/rdp-broker/internal/recording"
 	"github.com/p0-security/rdp-broker/internal/secrets"
 	"github.com/p0-security/rdp-broker/internal/session"
@@ -46,7 +46,6 @@ func main() {
 		"api_port", cfg.APIPort,
 		"broker_host", cfg.BrokerHost,
 		"proxy_port_range", fmt.Sprintf("%d-%d", cfg.ProxyPortStart, cfg.ProxyPortEnd),
-		"credential_provider", cfg.CredentialProvider,
 		"max_sessions", cfg.MaxConcurrentSessions,
 	)
 
@@ -59,28 +58,18 @@ func main() {
 			cfg.GCPServiceAccount,
 			logger,
 		)
-		secretClient = secrets.NewClient(tokenProvider, logger)
+		secretClient = secrets.NewClient(tokenProvider, cfg.GCPProjectID, logger)
 		logger.Info("secrets client initialized (WIF configured)",
 			"azure_credential_url", cfg.AzureCredentialURL,
 			"gcp_service_account", cfg.GCPServiceAccount,
 		)
 	}
 
-	// Initialize credential provider
-	var secretResolver credential.SecretResolver
+	// Secret resolver for resolving credential secret names to passwords.
+	var secretResolver api.SecretResolver
 	if secretClient != nil {
 		secretResolver = secretClient.AccessSecret
 	}
-	provider, err := newCredentialProvider(cfg, logger, secretResolver)
-	if err != nil {
-		logger.Error("failed to initialize credential provider", "error", err)
-		os.Exit(1)
-	}
-	defer provider.Close()
-
-	logger.Info("credential provider initialized",
-		"type", cfg.CredentialProvider,
-	)
 
 	// Ensure TLS certificates exist
 	certGen := certs.NewGenerator(cfg.CertDir)
@@ -120,7 +109,7 @@ func main() {
 		LogOutput:             os.Stdout,
 	}
 
-	manager, err := session.NewManager(provider, portPool, managerConfig)
+	manager, err := session.NewManager(portPool, managerConfig)
 	if err != nil {
 		logger.Error("failed to create session manager", "error", err)
 		os.Exit(1)
@@ -132,18 +121,21 @@ func main() {
 	aclStore := acl.NewMemoryStore()
 	logger.Info("ACL store initialized (in-memory)")
 
+	// Create JWT verifier backed by the ACL store's public keys.
+	verifier := auth.NewVerifier(aclStore)
+
 	// Create API router
-	router := api.NewRouter(cfg.APIKey, logger)
+	router := api.NewRouter(cfg.APIKey, verifier, logger)
 
 	// Register handlers
-	sessionsHandler := api.NewSessionsHandler(manager, cfg.BrokerHost, aclStore)
+	sessionsHandler := api.NewSessionsHandler(manager, cfg.BrokerHost, aclStore, secretResolver)
 	sessionsHandler.RegisterRoutes(router)
 
 	accessHandler := api.NewAccessHandler(aclStore, manager)
 	accessHandler.RegisterRoutes(router)
 
-	targetsHandler := api.NewTargetsHandler(provider)
-	targetsHandler.RegisterRoutes(router)
+	publicKeysHandler := api.NewPublicKeysHandler(aclStore)
+	publicKeysHandler.RegisterRoutes(router)
 
 	healthHandler := api.NewHealthHandler(manager)
 	healthHandler.RegisterRoutes(router)
@@ -161,9 +153,13 @@ func main() {
 	}
 	secretsHandler.RegisterRoutes(router)
 
-	// Serve the web dashboard at /
+	// Serve the web dashboard at / only — return 404 for unknown paths.
 	if cfg.WebDir != "" {
 		router.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.NotFound(w, r)
+				return
+			}
 			http.ServeFile(w, r, filepath.Join(cfg.WebDir, "index.html"))
 		}, false)
 	}
@@ -227,12 +223,6 @@ func main() {
 	}
 
 	logger.Info("shutdown complete")
-}
-
-// newCredentialProvider creates a credential provider based on configuration.
-func newCredentialProvider(cfg *config.Config, logger *slog.Logger, resolver credential.SecretResolver) (credential.CredentialProvider, error) {
-	logger.Info("using GSM credential provider")
-	return credential.NewGSMProvider(cfg.CredentialProviderConfig, resolver)
 }
 
 // initLogger initializes the structured logger.

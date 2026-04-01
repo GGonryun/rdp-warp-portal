@@ -17,19 +17,23 @@ type Client struct {
 	tokens     *TokenProvider
 	httpClient *http.Client
 	logger     *slog.Logger
+	projectID  string
 
 	// Base URL (overridable for testing)
 	secretManagerBaseURL string
 }
 
 // NewClient creates a Secret Manager client backed by the given TokenProvider.
-func NewClient(tokens *TokenProvider, logger *slog.Logger) *Client {
+// If projectID is non-empty, short secret names (e.g. "my-secret") are
+// automatically expanded to "projects/{projectID}/secrets/my-secret".
+func NewClient(tokens *TokenProvider, projectID string, logger *slog.Logger) *Client {
 	return &Client{
 		tokens: tokens,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 		logger:               logger,
+		projectID:            projectID,
 		secretManagerBaseURL: "https://secretmanager.googleapis.com",
 	}
 }
@@ -54,8 +58,14 @@ func (c *Client) AccessSecret(ctx context.Context, secretName string) (string, e
 		return "", fmt.Errorf("get access token: %w", err)
 	}
 
-	// Normalize the resource path
+	// Expand short secret names using the configured project ID.
 	path := secretName
+	if !strings.HasPrefix(path, "projects/") {
+		if c.projectID == "" {
+			return "", fmt.Errorf("secret %q is a short name but GCP_PROJECT_ID is not configured", secretName)
+		}
+		path = fmt.Sprintf("projects/%s/secrets/%s", c.projectID, path)
+	}
 	if !strings.Contains(path, "/versions/") {
 		path += "/versions/latest"
 	}

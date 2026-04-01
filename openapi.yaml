@@ -2,21 +2,28 @@ openapi: 3.0.3
 info:
   title: P0rtal RDP Broker API
   description: API for managing RDP sessions through the P0rtal broker proxy.
-  version: 1.0.0
+  version: 3.0.0
 
 servers:
   - url: http://localhost:8080
     description: Local development
-
-security:
-  - BearerAuth: []
 
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      description: API key passed as Bearer token. Set via API_KEY env var. Leave empty to disable auth.
+      description: >-
+        API key passed as Bearer token. Used for management API endpoints
+        (access control, public keys, recordings, secrets).
+    JWTAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        Signed JWT for user access API (POST /api/sessions). The JWT must
+        contain a `sub` claim (user email) and be signed with a private key
+        whose public key is registered via /api/public-keys.
 
   schemas:
     Error:
@@ -24,49 +31,101 @@ components:
       properties:
         error:
           type: string
-          example: Not Found
         code:
           type: integer
-          example: 404
         message:
           type: string
-          example: target not found
 
-    AccessRequest:
+    HostConfig:
       type: object
-      required: [email, target_id, username]
+      required: [hostname, ip]
+      properties:
+        hostname:
+          type: string
+          example: mike-rdp
+        ip:
+          type: string
+          example: 10.1.0.7
+        port:
+          type: integer
+          default: 3389
+          example: 3389
+        domain:
+          type: string
+          example: P0-LAB-1
+
+    UserConfig:
+      type: object
+      required: [email, username, secret]
       properties:
         email:
           type: string
           format: email
-          description: User email address (principal identifier)
-          example: "user@example.com"
-        target_id:
-          type: string
-          description: Target machine identifier
-          example: "dc-01"
+          example: miguel.campos@p0.dev
         username:
           type: string
-          description: Windows username on the target
-          example: "rdpadmin"
-
-    AccessStatusResponse:
-      type: object
-      properties:
-        status:
+          description: Windows username for RDP login
+          example: rdpadmin
+        secret:
           type: string
-          enum: [granted, revoked]
-          description: Result of the grant/revoke operation
+          description: Secret name in Google Secret Manager
+          example: p0_windows_domain_rdpadmin
 
-    ACLEntry:
+    Grant:
+      type: object
+      required: [host, user]
+      properties:
+        host:
+          $ref: "#/components/schemas/HostConfig"
+        user:
+          $ref: "#/components/schemas/UserConfig"
+
+    RevokeRequest:
+      type: object
+      required: [email, hostname]
+      properties:
+        email:
+          type: string
+          format: email
+          example: miguel.campos@p0.dev
+        hostname:
+          type: string
+          example: mike-rdp
+
+    PublicKeyRequest:
+      type: object
+      required: [email, public_key]
+      properties:
+        email:
+          type: string
+          format: email
+          example: miguel.campos@p0.dev
+        public_key:
+          type: string
+          description: Public key in PEM, SSH authorized key, or base64 DER format
+          example: "ssh-rsa AAAA..."
+
+    PublicKeyDeleteRequest:
+      type: object
+      required: [email, fingerprint]
+      properties:
+        email:
+          type: string
+          format: email
+        fingerprint:
+          type: string
+          description: SHA256 fingerprint of the key to delete
+          example: "SHA256:abc..."
+
+    PublicKeyEntry:
       type: object
       properties:
         email:
           type: string
           format: email
-        target_id:
+        public_key:
           type: string
-        username:
+        fingerprint:
           type: string
 
     HealthResponse:
@@ -80,51 +139,14 @@ components:
         available_ports:
           type: integer
 
-    TargetUser:
-      type: object
-      properties:
-        username:
-          type: string
-          example: rdpadmin
-        password:
-          type: string
-          example: password
-
-    Target:
-      type: object
-      properties:
-        id:
-          type: string
-          example: mike-rdp
-        hostname:
-          type: string
-          example: mike-rdp
-        ip:
-          type: string
-          example: 10.1.0.7
-        users:
-          type: array
-          items:
-            $ref: "#/components/schemas/TargetUser"
-
     CreateSessionRequest:
       type: object
-      required:
-        - target_id
-        - username
+      required: [hostname]
       properties:
-        target_id:
+        hostname:
           type: string
-          description: ID of the target machine to connect to
+          description: Hostname of the target machine to connect to
           example: mike-rdp
-        username:
-          type: string
-          description: Which user account to connect as on the target
-          example: rdpadmin
-        user_id:
-          type: string
-          description: Optional identifier for the requesting user
-          example: john.doe
 
     CreateSessionResponse:
       type: object
@@ -135,8 +157,9 @@ components:
           type: string
         proxy_port:
           type: integer
-        rdp_file_url:
+        rdp_file_content:
           type: string
+          description: Full RDP file content. Save as .rdp and open with an RDP client.
         state:
           type: string
           enum: [creating, active, connected, terminating, terminated]
@@ -156,6 +179,7 @@ components:
           type: string
         target_id:
           type: string
+          description: Hostname of the target
         target_host:
           type: string
         proxy_port:
@@ -180,18 +204,20 @@ components:
     CreateRecordingRequest:
       type: object
       properties:
-        sessionId:
+        session_id:
           type: string
-        targetId:
+        target_id:
           type: string
-        targetName:
+        target_name:
           type: string
-        windowsUser:
+        windows_user:
           type: string
-        proxyUser:
+        proxy_user:
           type: string
-        agentHostname:
+        agent_hostname:
           type: string
+        chunk_secs:
+          type: integer
 
     Recording:
       type: object
@@ -222,6 +248,8 @@ components:
           nullable: true
         duration_secs:
           type: number
+        chunk_secs:
+          type: integer
         chunk_count:
           type: integer
         total_bytes:
@@ -237,14 +265,7 @@ components:
           format: date-time
         type:
           type: string
-          enum:
-            [
-              process_start,
-              process_end,
-              window_focus,
-              session_start,
-              session_end,
-            ]
+          enum: [process_start, process_end, window_focus, mouse_click, clipboard, winlog]
         data:
           type: object
           additionalProperties: true
@@ -289,45 +310,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
         "503":
-          description: Service is not ready (no available ports)
+          description: Service is not ready
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
 
-  /api/targets:
-    get:
-      summary: List targets with available users
-      description: Returns all targets with their available user accounts and credentials.
-      tags: [Targets]
-      responses:
-        "200":
-          description: List of targets with users
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Target"
-              example:
-                - id: mike-rdp
-                  hostname: mike-rdp
-                  ip: 10.1.0.7
-                  users:
-                    - username: rdpadmin
-                      password: password
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
   /api/sessions:
     post:
       summary: Create RDP session
-      description: Creates a new RDP session to the specified target as the specified user.
+      description: >-
+        Creates a new RDP session. Requires a signed JWT (not an API key).
+        The user's identity is extracted from the JWT `sub` claim. The proxy
+        finds the matching grant by (email, hostname) and uses the stored
+        host + user config to create the session.
       tags: [Sessions]
+      security:
+        - JWTAuth: []
       requestBody:
         required: true
         content:
@@ -342,33 +341,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/CreateSessionResponse"
         "400":
-          description: Bad request (missing target_id or username)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Target or username not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+          description: Missing hostname
+        "401":
+          description: Invalid or missing JWT
+        "403":
+          description: No matching grant for this user + hostname
         "503":
-          description: Session limit reached or credential provider unavailable
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+          description: Session limit reached or secret resolution failed
     get:
       summary: List sessions
-      description: Returns sessions for the specified user. Defaults to "anonymous" if no user_id provided.
       tags: [Sessions]
+      security:
+        - BearerAuth: []
       parameters:
         - name: user_id
           in: query
           schema:
             type: string
-          description: Filter sessions by user ID
       responses:
         "200":
           description: List of sessions
@@ -383,6 +372,8 @@ paths:
     get:
       summary: Get session
       tags: [Sessions]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -398,13 +389,11 @@ paths:
                 $ref: "#/components/schemas/Session"
         "404":
           description: Session not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
     delete:
       summary: Terminate session
       tags: [Sessions]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -416,16 +405,13 @@ paths:
           description: Session terminated
         "404":
           description: Session not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
 
   /api/sessions/{id}/rdp:
     get:
       summary: Download RDP file
-      description: Returns an .rdp file for connecting to the session via an RDP client.
       tags: [Sessions]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -442,16 +428,130 @@ paths:
                 format: binary
         "404":
           description: Session not found
+
+  /api/access:
+    get:
+      summary: List all access grants
+      description: Returns all grants with full host + user configuration.
+      tags: [Access Control]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of grants
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                type: array
+                items:
+                  $ref: "#/components/schemas/Grant"
+
+  /api/grant:
+    post:
+      summary: Grant access
+      description: >-
+        Creates or updates an access grant with full host + user configuration.
+        Idempotent — re-granting the same (email, hostname) updates the config.
+      tags: [Access Control]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Grant"
+      responses:
+        "200":
+          description: Access granted
+        "400":
+          description: Missing required fields
+
+  /api/revoke:
+    post:
+      summary: Revoke access
+      description: >-
+        Revokes access for (email, hostname) and terminates active sessions.
+      tags: [Access Control]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeRequest"
+      responses:
+        "200":
+          description: Access revoked
+        "404":
+          description: Grant not found
+
+  /api/public-keys:
+    get:
+      summary: List all public keys
+      tags: [Public Keys]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: List of registered public keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublicKeyEntry"
+    post:
+      summary: Register a public key
+      description: >-
+        Adds a public key for a user email. A user can have multiple keys.
+        Idempotent — adding the same key is a no-op.
+      tags: [Public Keys]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicKeyRequest"
+      responses:
+        "200":
+          description: Key registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fingerprint:
+                    type: string
+        "400":
+          description: Invalid email or public key
+    delete:
+      summary: Remove a public key
+      description: Removes a specific key by email + fingerprint.
+      tags: [Public Keys]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicKeyDeleteRequest"
+      responses:
+        "200":
+          description: Key removed
+        "404":
+          description: Key not found
 
   /api/recordings:
     post:
       summary: Create recording
-      description: Called by the agent when a session starts recording.
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -465,51 +565,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Recording"
-        "400":
-          description: Bad request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
     get:
       summary: List recordings
-      description: >-
-        Returns recordings filtered by the given query parameters.
-        All filters are optional. Time filters use RFC 3339 format.
-        Recordings must be fully contained within the start/end range.
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: target
           in: query
-          description: Filter by target name or agent hostname (case-insensitive)
           schema:
             type: string
         - name: user
           in: query
-          description: Filter by Windows username (case-insensitive)
           schema:
             type: string
         - name: start
           in: query
-          description: Only recordings that started at or after this time (RFC 3339)
           schema:
             type: string
             format: date-time
         - name: end
           in: query
-          description: Only recordings that ended at or before this time (RFC 3339)
           schema:
             type: string
             format: date-time
         - name: status
           in: query
-          description: Filter by recording status
           schema:
             type: string
             enum: [recording, completed, failed]
       responses:
         "200":
-          description: List of recordings matching the filters
+          description: List of recordings
           content:
             application/json:
               schema:
@@ -521,6 +608,8 @@ paths:
     get:
       summary: Get recording metadata
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -536,14 +625,11 @@ paths:
                 $ref: "#/components/schemas/Recording"
         "404":
           description: Recording not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
     delete:
       summary: Delete recording
-      description: Permanently removes the recording and all associated data.
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -555,16 +641,13 @@ paths:
           description: Recording deleted
         "404":
           description: Recording not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/chunks:
     post:
       summary: Upload video chunk
-      description: Upload a video segment from the recording agent.
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -574,35 +657,22 @@ paths:
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          video/mp2t:
             schema:
-              type: object
-              properties:
-                chunk:
-                  type: string
-                  format: binary
+              type: string
+              format: binary
       responses:
         "200":
           description: Chunk uploaded
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  chunk_index:
-                    type: integer
         "404":
           description: Recording not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/events:
     post:
       summary: Send recording events
-      description: Send a batch of events from the recording agent.
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -618,24 +688,15 @@ paths:
               items:
                 $ref: "#/components/schemas/RecordingEvent"
       responses:
-        "200":
+        "204":
           description: Events received
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  received:
-                    type: integer
         "404":
           description: Recording not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
     get:
       summary: Get recording events
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -653,16 +714,13 @@ paths:
                   $ref: "#/components/schemas/RecordingEvent"
         "404":
           description: Recording not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/end:
     put:
       summary: End recording
-      description: Signal that recording has ended. Finalizes the video by concatenating chunks.
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -678,16 +736,13 @@ paths:
                 $ref: "#/components/schemas/Recording"
         "404":
           description: Recording not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
 
   /api/recordings/{id}/video:
     get:
       summary: Stream recording video
-      description: Serves the concatenated video file with HTTP range request support.
       tags: [Recordings]
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -704,96 +759,3 @@ paths:
                 format: binary
         "404":
           description: Recording or video not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /api/access:
-    get:
-      summary: List all access grants
-      description: Returns all current ACL entries.
-      tags: [Access Control]
-      responses:
-        "200":
-          description: List of access grants
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ACLEntry"
-
-  /api/grant:
-    post:
-      summary: Grant access
-      description: >-
-        Grants a user (identified by email) access to a specific target
-        with a given username.
-      tags: [Access Control]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AccessRequest"
-            example:
-              email: "user@example.com"
-              target_id: "dc-01"
-              username: "rdpadmin"
-      responses:
-        "200":
-          description: Access granted
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccessStatusResponse"
-        "400":
-          description: Invalid request (missing email, target_id, or username)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "409":
-          description: Access already exists
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /api/revoke:
-    post:
-      summary: Revoke access
-      description: >-
-        Revokes a user's access to a specific target and terminates any
-        active sessions that user has on that target.
-      tags: [Access Control]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AccessRequest"
-            example:
-              email: "user@example.com"
-              target_id: "dc-01"
-              username: "rdpadmin"
-      responses:
-        "200":
-          description: Access revoked and active sessions terminated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccessStatusResponse"
-        "400":
-          description: Invalid request (missing email, target_id, or username)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Access does not exist
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"

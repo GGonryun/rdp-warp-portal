@@ -16,7 +16,6 @@ import (
 func newTestManager(t *testing.T) (*Manager, func()) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	config := ManagerConfig{
@@ -32,7 +31,7 @@ func newTestManager(t *testing.T) (*Manager, func()) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -119,7 +118,6 @@ func TestManager_GenerateRDPFile_NotFound(t *testing.T) {
 func TestManager_SessionLimitReached(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33400, 11000) // Only 1 port available
 
 	config := ManagerConfig{
@@ -135,26 +133,16 @@ func TestManager_SessionLimitReached(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, _ := NewManager(provider, portPool, config)
+	manager, _ := NewManager(portPool, config)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		manager.Shutdown(ctx)
 	}()
 
-	_, err := manager.CreateSession(context.Background(), "user1", "dc-01", "Administrator", "127.0.0.1")
+	_, err := manager.CreateSession(context.Background(), "user1", &credential.TargetCredentials{Hostname: "dc-01", IP: "10.0.1.10", Port: 3389, Username: "Administrator", Password: "pass", Domain: "CORP"}, "127.0.0.1")
 	if !errors.Is(err, ErrSessionLimitReached) {
 		t.Errorf("expected ErrSessionLimitReached, got %v", err)
-	}
-}
-
-func TestManager_TargetNotFound(t *testing.T) {
-	manager, cleanup := newTestManager(t)
-	defer cleanup()
-
-	_, err := manager.CreateSession(context.Background(), "user1", "nonexistent-target", "admin", "127.0.0.1")
-	if !errors.Is(err, credential.ErrTargetNotFound) {
-		t.Errorf("expected ErrTargetNotFound, got %v", err)
 	}
 }
 
@@ -185,7 +173,6 @@ func TestManager_CreateAndTerminateSession_Integration(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	// Use 'nc -l' as a mock server that listens on a port
@@ -204,7 +191,7 @@ func TestManager_CreateAndTerminateSession_Integration(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, _ := NewManager(provider, portPool, config)
+	manager, _ := NewManager(portPool, config)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -214,7 +201,7 @@ func TestManager_CreateAndTerminateSession_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	// Session creation should fail because 'sleep' doesn't open the port
-	_, err := manager.CreateSession(ctx, "user1", "dc-01", "Administrator", "127.0.0.1")
+	_, err := manager.CreateSession(ctx, "user1", &credential.TargetCredentials{Hostname: "dc-01", IP: "10.0.1.10", Port: 3389, Username: "Administrator", Password: "pass", Domain: "CORP"}, "127.0.0.1")
 	if err == nil {
 		t.Error("expected error because proxy doesn't listen on port")
 	}
@@ -296,7 +283,6 @@ func TestManager_TerminateSession_WithActiveConnections(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	provider := credential.NewTestProvider()
 	// Use higher port numbers to avoid conflicts with other tests
 	portPool := NewPortPool(34500, 34510, 12000)
 
@@ -313,7 +299,7 @@ func TestManager_TerminateSession_WithActiveConnections(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -491,7 +477,6 @@ func mustNewToken(t *testing.T, ttl time.Duration) *Token {
 
 // TestNewManager_InvalidConfigDir tests that NewManager fails with invalid directories.
 func TestNewManager_InvalidConfigDir(t *testing.T) {
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	// Use a non-existent directory that cannot be created
@@ -507,7 +492,7 @@ func TestNewManager_InvalidConfigDir(t *testing.T) {
 	}
 
 	// NewManager should still succeed because ConfigWriter only validates template parsing
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Logf("NewManager with invalid dirs returned error (expected for some cases): %v", err)
 	}
@@ -522,7 +507,6 @@ func TestNewManager_InvalidConfigDir(t *testing.T) {
 func TestManager_DefaultTimeouts(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	// Config without timeouts - should use defaults
@@ -538,7 +522,7 @@ func TestManager_DefaultTimeouts(t *testing.T) {
 		// ProxyStartTimeout and ProxyStopTimeout are not set
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -561,7 +545,6 @@ func TestManager_DefaultTimeouts(t *testing.T) {
 func TestManager_NilLogger(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(33400, 33410, 11000)
 
 	config := ManagerConfig{
@@ -576,7 +559,7 @@ func TestManager_NilLogger(t *testing.T) {
 		Logger:                nil, // Explicitly nil
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -603,7 +586,7 @@ func TestManager_CreateSession_ShutdownInProgress(t *testing.T) {
 	cleanup()
 
 	// Try to create a session after shutdown
-	_, err := manager.CreateSession(context.Background(), "user1", "dc-01", "Administrator", "127.0.0.1")
+	_, err := manager.CreateSession(context.Background(), "user1", &credential.TargetCredentials{Hostname: "dc-01", IP: "10.0.1.10", Port: 3389, Username: "Administrator", Password: "pass", Domain: "CORP"}, "127.0.0.1")
 	if err == nil {
 		t.Error("expected error when creating session during shutdown")
 	}
@@ -616,7 +599,6 @@ func TestManager_TerminateSession_AlreadyTerminating(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34600, 34610, 12000)
 
 	config := ManagerConfig{
@@ -632,7 +614,7 @@ func TestManager_TerminateSession_AlreadyTerminating(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -708,7 +690,6 @@ func TestManager_ListSessions_FilterByUser(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34700, 34710, 12000)
 
 	config := ManagerConfig{
@@ -724,7 +705,7 @@ func TestManager_ListSessions_FilterByUser(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -786,7 +767,6 @@ func TestManager_ListSessions_FilterByUser(t *testing.T) {
 // TestManager_TokenExpiry tests that token expiry is correctly returned.
 func TestManager_TokenExpiry(t *testing.T) {
 	tmpDir := t.TempDir()
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34800, 34810, 12000)
 
 	config := ManagerConfig{
@@ -802,7 +782,7 @@ func TestManager_TokenExpiry(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -856,7 +836,6 @@ func TestManager_TokenExpiry(t *testing.T) {
 // TestManager_GenerateRDPFile_InvalidState tests RDP file generation for non-active sessions.
 func TestManager_GenerateRDPFile_InvalidState(t *testing.T) {
 	tmpDir := t.TempDir()
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(34900, 34910, 12000)
 
 	config := ManagerConfig{
@@ -872,7 +851,7 @@ func TestManager_GenerateRDPFile_InvalidState(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -972,7 +951,6 @@ func TestManager_Shutdown_WithTimeout(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	provider := credential.NewTestProvider()
 	portPool := NewPortPool(35000, 35010, 12000)
 
 	config := ManagerConfig{
@@ -988,7 +966,7 @@ func TestManager_Shutdown_WithTimeout(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -1060,7 +1038,6 @@ func TestManager_ProviderError(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create a mock provider and remove all targets to trigger errors
-	provider := credential.NewTestProvider()
 
 	portPool := NewPortPool(35100, 35110, 12000)
 
@@ -1077,7 +1054,7 @@ func TestManager_ProviderError(t *testing.T) {
 		ProxyStopTimeout:      100 * time.Millisecond,
 	}
 
-	manager, err := NewManager(provider, portPool, config)
+	manager, err := NewManager(portPool, config)
 	if err != nil {
 		t.Fatalf("NewManager failed: %v", err)
 	}
@@ -1087,9 +1064,4 @@ func TestManager_ProviderError(t *testing.T) {
 		manager.Shutdown(ctx)
 	}()
 
-	// Try to get credentials for a non-existent target
-	_, err = manager.CreateSession(context.Background(), "user1", "nonexistent-target", "admin", "127.0.0.1")
-	if !errors.Is(err, credential.ErrTargetNotFound) {
-		t.Errorf("expected ErrTargetNotFound, got %v", err)
-	}
 }

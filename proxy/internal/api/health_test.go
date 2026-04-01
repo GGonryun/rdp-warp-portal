@@ -142,7 +142,7 @@ func TestHealthHandler_Ready_NegativePorts(t *testing.T) {
 func TestHealthHandler_RegisterRoutes(t *testing.T) {
 	mock := newMockManager()
 	handler := NewHealthHandler(mock)
-	router := NewRouter("test-secret", nil)
+	router := NewRouter("test-secret", nil, nil)
 
 	// Should not panic
 	handler.RegisterRoutes(router)
@@ -178,7 +178,7 @@ func TestHealthHandler_RegisterRoutes(t *testing.T) {
 func TestHealthHandler_NoAuth_Required(t *testing.T) {
 	mock := newMockManager()
 	handler := NewHealthHandler(mock)
-	router := NewRouter("test-secret", nil)
+	router := NewRouter("test-secret", nil, nil)
 	handler.RegisterRoutes(router)
 
 	// Health endpoints should work without auth

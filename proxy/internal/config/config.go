@@ -36,6 +36,7 @@ type Config struct {
 	AzureCredentialURL string // Full Azure IMDS token URL
 	GCPWIFAudience     string // Google WIF audience URL
 	GCPServiceAccount  string // Google service account email to impersonate
+	GCPProjectID       string // GCP project ID for short secret names (e.g. "233195464130")
 }
 
 // Load reads configuration from environment variables with defaults.
@@ -68,6 +69,7 @@ func Load() (*Config, error) {
 		AzureCredentialURL: os.Getenv("AZURE_CREDENTIAL_URL"),
 		GCPWIFAudience:    os.Getenv("GCP_WIF_AUDIENCE"),
 		GCPServiceAccount: os.Getenv("GCP_SERVICE_ACCOUNT"),
+		GCPProjectID:      os.Getenv("GCP_PROJECT_ID"),
 	}
 
 	if cfg.BrokerHost == "" {

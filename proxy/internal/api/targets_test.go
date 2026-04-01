@@ -52,30 +52,23 @@ func (m *mockProvider) ListDestinations(ctx context.Context) ([]credential.Targe
 	return m.destinations, nil
 }
 
+func (m *mockProvider) ResolveUsername(_ context.Context, email string) (string, error) {
+	return "resolved-user", nil
+}
+
 func (m *mockProvider) Close() error {
 	return nil
 }
 
 func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 	provider := newMockProvider()
-	provider.destinations = []credential.TargetDestination{
-		{
-			ID: "dc-01", Hostname: "dc-01", IP: "10.0.1.10",
-			Users: []credential.TargetUser{
-				{Username: "Administrator"},
-			},
-		},
-		{
-			ID: "ws-01", Hostname: "ws-01", IP: "10.0.1.50",
-			Users: []credential.TargetUser{
-				{Username: "svc-rdp"},
-				{Username: "admin"},
-			},
-		},
+	provider.targets = []credential.TargetInfo{
+		{ID: "dc-01", Hostname: "dc-01", IP: "10.0.1.10", Domain: "CORP"},
+		{ID: "ws-01", Hostname: "ws-01", IP: "10.0.1.50"},
 	}
 
 	handler := NewTargetsHandler(provider)
-	router := NewRouter("", nil)
+	router := NewRouter("", nil, nil)
 	handler.RegisterRoutes(router)
 
 	req := httptest.NewRequest("GET", "/api/targets", nil)
@@ -87,7 +80,7 @@ func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp []TargetResponse
+	var resp []credential.TargetInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
@@ -99,14 +92,11 @@ func TestTargetsHandler_ListTargets_Success(t *testing.T) {
 	if resp[0].ID != "dc-01" {
 		t.Errorf("expected first target ID 'dc-01', got %q", resp[0].ID)
 	}
-	if len(resp[0].Users) != 1 {
-		t.Fatalf("expected 1 user for dc-01, got %d", len(resp[0].Users))
+	if resp[0].Domain != "CORP" {
+		t.Errorf("expected domain 'CORP', got %q", resp[0].Domain)
 	}
-	if resp[0].Users[0].Username != "Administrator" {
-		t.Errorf("expected username 'Administrator', got %q", resp[0].Users[0].Username)
-	}
-	if len(resp[1].Users) != 2 {
-		t.Fatalf("expected 2 users for ws-01, got %d", len(resp[1].Users))
+	if resp[1].Domain != "" {
+		t.Errorf("expected empty domain, got %q", resp[1].Domain)
 	}
 }
 
@@ -114,7 +104,7 @@ func TestTargetsHandler_ListTargets_Empty(t *testing.T) {
 	provider := newMockProvider()
 
 	handler := NewTargetsHandler(provider)
-	router := NewRouter("", nil)
+	router := NewRouter("", nil, nil)
 	handler.RegisterRoutes(router)
 
 	req := httptest.NewRequest("GET", "/api/targets", nil)
@@ -126,7 +116,7 @@ func TestTargetsHandler_ListTargets_Empty(t *testing.T) {
 		t.Errorf("expected status 200, got %d", rec.Code)
 	}
 
-	var resp []TargetResponse
+	var resp []credential.TargetInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
@@ -138,10 +128,10 @@ func TestTargetsHandler_ListTargets_Empty(t *testing.T) {
 
 func TestTargetsHandler_ListTargets_ProviderError(t *testing.T) {
 	provider := newMockProvider()
-	provider.destErr = errors.New("database connection failed")
+	provider.listErr = errors.New("database connection failed")
 
 	handler := NewTargetsHandler(provider)
-	router := NewRouter("", nil)
+	router := NewRouter("", nil, nil)
 	handler.RegisterRoutes(router)
 
 	req := httptest.NewRequest("GET", "/api/targets", nil)
@@ -157,20 +147,28 @@ func TestTargetsHandler_ListTargets_ProviderError(t *testing.T) {
 func TestNewTargetsHandler(t *testing.T) {
 	provider := newMockProvider()
 	handler := NewTargetsHandler(provider)
-
 	if handler == nil {
 		t.Fatal("NewTargetsHandler returned nil")
 	}
-	if handler.provider != provider {
-		t.Error("expected provider to be set")
-	}
 }
 
-func TestTargetsHandler_RegisterRoutes(t *testing.T) {
+func TestTargetsHandler_ListTargets_WithAPIKey(t *testing.T) {
 	provider := newMockProvider()
-	handler := NewTargetsHandler(provider)
-	router := NewRouter("test-secret", nil)
+	provider.targets = []credential.TargetInfo{
+		{ID: "dc-01", Hostname: "dc-01", IP: "10.0.1.10"},
+	}
 
-	// Should not panic
+	handler := NewTargetsHandler(provider)
+	router := NewRouter("test-secret", nil, nil)
 	handler.RegisterRoutes(router)
+
+	req := httptest.NewRequest("GET", "/api/targets", nil)
+	req.Header.Set("Authorization", "Bearer test-secret")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", rec.Code)
+	}
 }

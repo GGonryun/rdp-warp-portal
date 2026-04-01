@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/p0-security/rdp-broker/internal/auth"
 )
 
 // ContextKey is a type for context keys to avoid collisions.
@@ -22,21 +24,24 @@ const (
 
 // Router wraps http.ServeMux with middleware and logging.
 type Router struct {
-	mux    *http.ServeMux
-	apiKey string
-	logger *slog.Logger
+	mux      *http.ServeMux
+	apiKey   string
+	verifier *auth.Verifier
+	logger   *slog.Logger
 }
 
 // NewRouter creates a new API router.
-// If apiKey is non-empty, all /api/ requests require Bearer <apiKey>.
-func NewRouter(apiKey string, logger *slog.Logger) *Router {
+// If apiKey is non-empty, all /api/ requests (except JWT-protected ones) require Bearer <apiKey>.
+// The verifier is used for JWT-protected endpoints (POST /api/sessions).
+func NewRouter(apiKey string, verifier *auth.Verifier, logger *slog.Logger) *Router {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Router{
-		mux:    http.NewServeMux(),
-		apiKey: apiKey,
-		logger: logger,
+		mux:      http.NewServeMux(),
+		apiKey:   apiKey,
+		verifier: verifier,
+		logger:   logger,
 	}
 }
 
@@ -67,19 +72,53 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if r.apiKey != "" && strings.HasPrefix(req.URL.Path, "/api/") {
-		authHeader := req.Header.Get("Authorization")
-		if authHeader == "" {
-			writeError(w, http.StatusUnauthorized, "missing authorization header")
-			return
-		}
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" || parts[1] != r.apiKey {
-			writeError(w, http.StatusUnauthorized, "invalid api key")
-			return
+	if strings.HasPrefix(req.URL.Path, "/api/") {
+		if r.isJWTProtected(req) {
+			// JWT-protected endpoint: verify signed token, extract identity.
+			authHeader := req.Header.Get("Authorization")
+			if authHeader == "" {
+				writeError(w, http.StatusUnauthorized, "missing authorization header")
+				return
+			}
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+				writeError(w, http.StatusUnauthorized, "invalid authorization header")
+				return
+			}
+
+			claims, err := r.verifier.Verify(req.Context(), parts[1])
+			if err != nil {
+				r.logger.Warn("JWT verification failed", "error", err, "path", req.URL.Path)
+				writeError(w, http.StatusUnauthorized, "invalid token")
+				return
+			}
+			sub, _ := claims.GetSubject()
+			ctx := context.WithValue(req.Context(), ContextKeyUserID, sub)
+			req = req.WithContext(ctx)
+		} else if r.apiKey != "" {
+			// All other /api/ endpoints: check shared API key.
+			authHeader := req.Header.Get("Authorization")
+			if authHeader == "" {
+				writeError(w, http.StatusUnauthorized, "missing authorization header")
+				return
+			}
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" || parts[1] != r.apiKey {
+				writeError(w, http.StatusUnauthorized, "invalid api key")
+				return
+			}
 		}
 	}
 	r.mux.ServeHTTP(w, req)
+}
+
+// isJWTProtected returns true for endpoints that require JWT identity verification
+// instead of the shared API key.
+func (r *Router) isJWTProtected(req *http.Request) bool {
+	if r.verifier == nil {
+		return false
+	}
+	return req.Method == http.MethodPost && req.URL.Path == "/api/sessions"
 }
 
 // loggingMiddleware logs request details.
