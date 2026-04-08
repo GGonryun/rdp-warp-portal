@@ -4,6 +4,8 @@
 
 # Environment and secrets
 .env
+.env.dev
+.env.lab
 proxy/targets.json
 targets.json
 config.json
